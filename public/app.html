@@ -21,6 +21,7 @@
     <a class="nav-link" data-view="sale" href="#sale"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>New sale</a>
     <a class="nav-link" data-view="history" href="#history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>Sales history</a>
     <a class="nav-link" data-view="reports" href="#reports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Reports &amp; close</a>
+    <a class="nav-link admin-only" data-view="customers" href="#customers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Customers</a>
 
     <div class="nav-section admin-only">Print shop</div>
     <a class="nav-link admin-only" data-view="print-monitor" href="#print-monitor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5"/><rect x="3" y="8" width="18" height="9" rx="2"/><path d="M7 14h10v7H7z"/></svg>Print monitor<span class="count" id="unreviewed-count" hidden></span></a>
@@ -105,7 +106,8 @@
         <section class="card cart" aria-label="Current sale">
           <div class="spread"><h2>Current sale</h2><button class="btn btn-ghost btn-sm" type="button" id="clear-cart-btn">Clear</button></div>
           <div class="form-grid">
-            <div class="field"><label for="customer-name">Customer</label><input id="customer-name" placeholder="Walk-in customer" maxlength="200"></div>
+            <div class="field" style="position:relative;"><label for="customer-name">Customer</label><input id="customer-name" placeholder="Walk-in customer" maxlength="200" autocomplete="off" aria-autocomplete="list" aria-controls="customer-matches">
+              <div id="customer-matches" class="lookup-list" role="listbox" hidden></div></div>
             <div class="field"><label for="customer-phone">Phone (optional)</label><input id="customer-phone" type="tel" maxlength="40"></div>
           </div>
           <div id="cart-sessions" class="chips"></div>
@@ -199,6 +201,29 @@
           <div id="closed-info" class="stack" hidden></div>
         </section>
       </div>
+      <div class="card stack admin-only" id="traffic-card">
+        <div class="spread"><div><h2>Busy hours and staffing</h2><p class="muted small" style="margin:4px 0 0;" id="traffic-note"></p></div>
+          <div class="segmented" style="width:280px; grid-template-columns:repeat(2,minmax(0,1fr));" role="group" aria-label="Heatmap view">
+            <button type="button" data-heat="rate" class="active" aria-pressed="true">Customers / hour</button>
+            <button type="button" data-heat="staff" aria-pressed="false">Cashiers needed</button>
+          </div></div>
+        <div class="table-wrap" id="heatmap-wrap"></div>
+      </div>
+      <div class="card stack admin-only">
+        <div><h2>Product mix and margins (last 90 days)</h2><p class="muted small" style="margin:4px 0 0;">ABC ranks products by share of revenue (A = top 80%). XYZ rates how steady weekly demand is (X steady, Z erratic). Margins need a cost price on the product.</p></div>
+        <div class="table-wrap" id="mix-wrap"></div>
+      </div>
+    </section>
+
+    <!-- ============ CUSTOMERS (admin) ============ -->
+    <section class="view" id="view-customers" aria-labelledby="h-customers">
+      <div class="page-head">
+        <div><span class="eyebrow">Sales</span><h1 id="h-customers">Customers</h1>
+          <p class="muted" style="margin:6px 0 0; max-width:760px;">Recognised from the names and phone numbers typed at the till, even when spelled or formatted differently. Grouped by how recently, how often and how much they buy.</p></div>
+        <div class="page-actions"><label class="sr-only" for="customer-search">Search customers</label><input class="input" id="customer-search" placeholder="Search name or phone" style="width:220px;"></div>
+      </div>
+      <div class="chips" id="segment-chips" role="group" aria-label="Customer groups"></div>
+      <div class="card"><div class="table-wrap" id="customers-table-wrap"></div></div>
     </section>
 
     <!-- ============ PRINT MONITOR (admin) ============ -->
@@ -221,6 +246,11 @@
           <div class="card">
             <h2 style="margin-bottom:10px;">By printer</h2>
             <div id="summary-by-printer"></div>
+          </div>
+          <div class="card stack">
+            <div class="spread"><h2>Printer supplies</h2></div>
+            <p class="muted small" style="margin:0;">Paper is counted in sheets, toner in pages, since you last refilled. Run-out dates follow each printer's recent use.</p>
+            <div id="supplies-wrap"></div>
           </div>
           <div class="card stack">
             <div class="spread"><h2>Agents</h2><button class="btn btn-outline btn-sm" type="button" id="agent-register-btn">Register agent</button></div>

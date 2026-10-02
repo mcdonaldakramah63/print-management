@@ -201,6 +201,33 @@ ensureColumn('sales', 'customer_phone', "customer_phone TEXT NOT NULL DEFAULT ''
 ensureColumn('sales', 'voided_at', 'voided_at TEXT');
 ensureColumn('sales', 'voided_by', 'voided_by INTEGER REFERENCES users(id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)');
+// Profitability: optional cost price per product, snapshotted onto each sale
+// line so margins stay correct after a cost changes.
+ensureColumn('products', 'cost_price', 'cost_price REAL');
+ensureColumn('sale_items', 'unit_cost', 'unit_cost REAL');
+
+// Consumables per printer (paper loaded / toner fitted) and their usage since.
+db.exec(`
+CREATE TABLE IF NOT EXISTS printer_supplies (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  printer_name  TEXT NOT NULL,
+  kind          TEXT NOT NULL CHECK (kind IN ('paper','toner')),
+  capacity      INTEGER NOT NULL,
+  refilled_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  refilled_by   INTEGER REFERENCES users(id),
+  UNIQUE (printer_name, kind)
+);
+CREATE TABLE IF NOT EXISTS supply_refills (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  printer_name  TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  capacity      INTEGER NOT NULL,
+  remaining_before INTEGER,
+  refilled_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  refilled_by   INTEGER REFERENCES users(id)
+);
+`);
+
 // Reorder planning: supplier lead time and how many days an order should cover.
 ensureColumn('settings', 'reorder_lead_days', 'reorder_lead_days INTEGER NOT NULL DEFAULT 3');
 ensureColumn('settings', 'reorder_cover_days', 'reorder_cover_days INTEGER NOT NULL DEFAULT 14');

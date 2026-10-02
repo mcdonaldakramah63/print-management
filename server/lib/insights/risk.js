@@ -199,6 +199,22 @@ function lateVoids(since) {
   }));
 }
 
+function offHoursPrinting(since) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS jobs, COALESCE(SUM(COALESCE(impressions, pages)), 0) AS pages,
+           COUNT(DISTINCT substr(submitted_at, 1, 10)) AS days
+    FROM print_jobs WHERE flags LIKE '%"off_hours"%' AND substr(submitted_at, 1, 10) >= ?
+  `).get(since);
+  if (row.pages < 10) return [];
+  return [{
+    type: 'off_hours_printing',
+    severity: row.pages >= 100 ? 'high' : 'medium',
+    title: `Printing while the shop is usually closed`,
+    detail: `${row.pages} pages in ${row.jobs} jobs over ${row.days} day(s), outside the opening hours learned from your sales. Check Print monitor for who printed them.`,
+    metric: row
+  }];
+}
+
 function riskAlerts(reconcile, now = new Date()) {
   const today = localDateString(now);
   const since = addDays(today, -30);
@@ -207,7 +223,8 @@ function riskAlerts(reconcile, now = new Date()) {
     ...revenueAnomalies(today),
     ...printGapAnomalies(today, reconcile),
     ...cashDrawerAlerts(),
-    ...lateVoids(since)
+    ...lateVoids(since),
+    ...offHoursPrinting(since)
   ];
   const rank = { high: 0, medium: 1 };
   alerts.sort((a, b) => rank[a.severity] - rank[b.severity]);

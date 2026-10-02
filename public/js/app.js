@@ -12,8 +12,8 @@ let catalogCategory = 'All';
 let currentView = null;
 let historyPage = 1;
 
-const ADMIN_VIEWS = ['products', 'print-monitor', 'reconcile', 'users', 'settings'];
-const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
+const ADMIN_VIEWS = ['products', 'print-monitor', 'reconcile', 'users', 'settings', 'customers'];
+const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'customers', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
 const PAY_LABELS = { cash: 'Cash', momo: 'Mobile money', card: 'Card' };
 
 const $ = (id) => document.getElementById(id);
@@ -48,11 +48,15 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
   setupNav();
   setupSale();
+  setupCustomerLookup();
   setupHistory();
   setupReports();
   if (isAdmin()) {
     setupPrintMonitor();
     setupReconcile();
+    setupCustomers();
+    setupTraffic();
+    setupSupplies();
     setupProducts();
     setupUsers();
     setupSettings();
@@ -241,8 +245,9 @@ function navigateTo(view) {
     dashboard: loadDashboard,
     sale: enterSale,
     history: loadHistory,
-    reports: () => Promise.all([loadReport(), loadClose(), loadClosings()]),
-    'print-monitor': () => Promise.all([loadPrintSummary(), loadSessions(), loadAgents()]),
+    reports: () => Promise.all([loadReport(), loadClose(), loadClosings(), ...(isAdmin() ? [loadTraffic(), loadMix()] : [])]),
+    customers: loadCustomers,
+    'print-monitor': () => Promise.all([loadPrintSummary(), loadSessions(), loadAgents(), loadSupplies()]),
     reconcile: loadReconcile,
     products: loadProducts,
     users: loadUsers,
@@ -1097,6 +1102,7 @@ const ICONS = {
 
 function sessionAlerts(flags) {
   const text = {
+    off_hours: (f) => [`${plural(f.jobs, 'job')} printed after hours`, '', ICONS.burst],
     burst: (f) => [`${f.jobs} jobs within ${f.seconds} s`, '', ICONS.burst],
     concurrent: (f) => [`${f.jobs} printing at once`, '', ICONS.concurrent],
     partial: (f) => [`${plural(f.jobs, 'partial print')}`, '', ICONS.partial],
@@ -1304,6 +1310,203 @@ function renderAudit(audit) {
 }
 
 // ---------------------------------------------------------------
+// Customers (admin) and checkout lookup
+// ---------------------------------------------------------------
+const SEGMENTS = {
+  champion: ['Champions', 'Recent, frequent, high spend', 'ok'],
+  loyal: ['Loyal', 'Come back regularly', 'ok'],
+  promising: ['Promising', 'Recent, starting to return', 'info'],
+  new: ['New', 'First visit in the last two weeks', 'info'],
+  at_risk: ['At risk', 'Good customers who have gone quiet', 'warn'],
+  needs_attention: ['Needs attention', 'Middling and slipping', 'warn'],
+  lost: ['Lost', 'Not seen for over two months', 'danger'],
+  one_off: ['One-off', 'Came once, a while ago', '']
+};
+let customerSegment = '';
+
+function setupCustomers() {
+  let timer = null;
+  $('customer-search').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => loadCustomers().catch((err) => toast(err.message, true)), 250); });
+  $('segment-chips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-segment]');
+    if (!b) return;
+    customerSegment = customerSegment === b.dataset.segment ? '' : b.dataset.segment;
+    loadCustomers().catch((err) => toast(err.message, true));
+  });
+}
+
+async function loadCustomers() {
+  const params = new URLSearchParams();
+  if (customerSegment) params.set('segment', customerSegment);
+  const q = $('customer-search').value.trim();
+  if (q) params.set('q', q);
+  const data = await api('GET', `/api/insights/customers?${params.toString()}`);
+  $('segment-chips').innerHTML = Object.entries(SEGMENTS).filter(([k]) => data.segments[k]).map(([k, [label, hint]]) =>
+    `<button type="button" class="chip seg-chip${customerSegment === k ? ' active' : ''}" data-segment="${k}" aria-pressed="${customerSegment === k}" title="${escapeHtml(hint)}">${escapeHtml(label)}<span class="count">${data.segments[k]}</span></button>`).join('');
+  $('customers-table-wrap').innerHTML = data.customers.length === 0
+    ? emptyState('No customers yet. Customers appear once names or phone numbers are entered at checkout.')
+    : `<table>
+      <thead><tr><th>Customer</th><th>Phone</th><th class="num">Visits</th><th class="num">Spend</th><th class="num">Average</th><th>Last visit</th><th>Usually every</th><th>Group</th></tr></thead>
+      <tbody>${data.customers.map((c) => {
+        const [label, , cls] = SEGMENTS[c.segment] || [c.segment, '', ''];
+        return `<tr>
+          <td><strong>${escapeHtml(c.name)}</strong>${c.aliases.length ? `<div class="muted small">also: ${c.aliases.map(escapeHtml).join(', ')}</div>` : ''}</td>
+          <td>${c.phones.length ? escapeHtml(c.phones[0]) : '<span class="muted">&mdash;</span>'}</td>
+          <td class="num">${c.visits}</td>
+          <td class="num">${escapeHtml(cur(c.spend))}</td>
+          <td class="num">${escapeHtml(cur(c.average))}</td>
+          <td>${c.days_since === 0 ? 'Today' : `${plural(c.days_since, 'day')} ago`}</td>
+          <td>${c.usual_gap_days ? plural(Math.round(c.usual_gap_days), 'day') : '<span class="muted">&mdash;</span>'}</td>
+          <td><span class="badge ${cls}">${escapeHtml(label)}</span>${c.overdue ? ' <span class="badge warn" title="Well past their usual gap between visits">Overdue</span>' : ''}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+}
+
+function setupCustomerLookup() {
+  const input = $('customer-name');
+  const list = $('customer-matches');
+  let timer = null;
+  let token = 0;
+  const hide = () => { list.hidden = true; };
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) { hide(); return; }
+    timer = setTimeout(async () => {
+      const mine = ++token;
+      let customers = [];
+      try { ({ customers } = await api('GET', `/api/insights/customers/lookup?q=${encodeURIComponent(q)}`)); } catch (_) { /* optional */ }
+      if (mine !== token) return;
+      list.hidden = customers.length === 0;
+      list.innerHTML = customers.map((c, i) => `<button type="button" role="option" data-i="${i}">${escapeHtml(c.name)} <small>${c.phone ? `${escapeHtml(c.phone)} · ` : ''}${plural(c.visits, 'visit')}</small></button>`).join('');
+      list._customers = customers;
+    }, 200);
+  });
+  list.addEventListener('mousedown', (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b) return;
+    e.preventDefault();
+    const c = list._customers[Number(b.dataset.i)];
+    input.value = c.name;
+    if (c.phone && !$('customer-phone').value) $('customer-phone').value = c.phone;
+    hide();
+  });
+  input.addEventListener('blur', () => setTimeout(hide, 150));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+}
+
+// ---------------------------------------------------------------
+// Busy hours (admin, on Reports)
+// ---------------------------------------------------------------
+let trafficData = null;
+let heatMode = 'rate';
+
+function setupTraffic() {
+  document.querySelectorAll('[data-heat]').forEach((b) => b.addEventListener('click', () => {
+    heatMode = b.dataset.heat;
+    document.querySelectorAll('[data-heat]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', String(x === b)); });
+    renderHeatmap();
+  }));
+}
+
+async function loadTraffic() {
+  trafficData = await api('GET', '/api/insights/traffic');
+  $('traffic-note').textContent = `About ${trafficData.service_minutes} min per customer (measured). Cashier counts aim to serve ${Math.round(trafficData.target.service_level * 100)}% of customers within ${trafficData.target.wait_minutes} min (Erlang C queueing model).`;
+  renderHeatmap();
+}
+
+function renderHeatmap() {
+  const t = trafficData;
+  if (!t) return;
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const values = heatMode === 'rate' ? t.rate : t.staff;
+  const max = Math.max(1, ...order.flatMap((wd) => t.hours.map((h) => values[wd][h])));
+  const cell = (v) => {
+    if (!v) return '<td style="background:var(--surface-2); color:var(--input-line);">·</td>';
+    const k = v / max;
+    const bg = `rgba(35, 70, 216, ${0.12 + 0.78 * k})`;
+    return `<td style="background:${bg}; color:${k > 0.55 ? '#fff' : 'var(--accent-ink)'};">${heatMode === 'rate' ? (v < 10 ? v.toFixed(1) : Math.round(v)) : v}</td>`;
+  };
+  $('heatmap-wrap').innerHTML = `<table class="heatmap" aria-label="${heatMode === 'rate' ? 'Average customers per hour' : 'Recommended cashiers'} by weekday and hour">
+    <thead><tr><th></th>${t.hours.map((h) => `<th scope="col">${String(h).padStart(2, '0')}</th>`).join('')}</tr></thead>
+    <tbody>${order.map((wd, i) => `<tr><th scope="row" class="day">${days[i]}${t.opening[wd] ? `<div class="muted" style="font-weight:400; font-size:10.5px;">${minutesLabel(t.opening[wd].open)}–${minutesLabel(t.opening[wd].close)}</div>` : ''}</th>${t.hours.map((h) => cell(values[wd][h])).join('')}</tr>`).join('')}</tbody>
+  </table>
+  ${t.peak.length ? `<p class="muted small" style="margin:8px 0 0;">Busiest: ${t.peak.slice(0, 3).map((p) => `${days[order.indexOf(p.wd)]} ${String(p.hr).padStart(2, '0')}:00 (${p.per_hour}/h, ${plural(p.cashiers, 'cashier')})`).join(' · ')}. Row labels show the opening hours learned from your sales.</p>` : ''}`;
+}
+
+function minutesLabel(m) {
+  const h = Math.floor(m / 60);
+  return `${String(h).padStart(2, '0')}:${String(Math.round(m % 60)).padStart(2, '0')}`;
+}
+
+// ---------------------------------------------------------------
+// Product mix (admin, on Reports)
+// ---------------------------------------------------------------
+async function loadMix() {
+  const { products } = await api('GET', '/api/insights/product-mix');
+  const clsBadge = (c) => `<span class="badge ${c[0] === 'A' ? 'ok' : c[0] === 'B' ? 'info' : ''}">${escapeHtml(c)}</span>`;
+  $('mix-wrap').innerHTML = products.length === 0 ? emptyState('No catalogue sales in the last 90 days.') : `
+    <table><thead><tr><th>Product</th><th>Class</th><th class="num">Revenue</th><th class="num">Share</th><th class="num">Margin</th><th>What it means</th></tr></thead>
+    <tbody>${products.map((p) => `<tr>
+      <td>${escapeHtml(p.name)}</td>
+      <td>${clsBadge(p.class)}</td>
+      <td class="num">${escapeHtml(cur(p.revenue))}</td>
+      <td class="num">${p.share}%</td>
+      <td class="num">${p.margin === null ? '<span class="muted" title="Add a cost price to this product">&mdash;</span>' : `${escapeHtml(cur(p.margin))}<div class="muted small">${p.margin_pct}%</div>`}</td>
+      <td class="small">${escapeHtml(p.advice)}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// ---------------------------------------------------------------
+// Printer supplies (admin, on Print monitor)
+// ---------------------------------------------------------------
+let suppliesData = [];
+
+function setupSupplies() {
+  $('supplies-wrap').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-refill]');
+    if (!b) return;
+    const printer = b.dataset.printer;
+    const kind = b.dataset.refill;
+    const current = suppliesData.find((p) => p.printer === printer)?.supplies.find((x) => x.kind === kind);
+    openModal({
+      title: `${kind === 'paper' ? 'Paper loaded' : 'Toner replaced'}: ${printer}`,
+      submitLabel: 'Save',
+      body: `<div class="field"><label for="refill-cap">${kind === 'paper' ? 'Sheets now in the printer' : 'Rated yield of the new toner (pages)'}</label>
+        <input id="refill-cap" type="number" min="1" step="1" required value="${current && current.capacity ? current.capacity : kind === 'paper' ? 500 : 2000}"></div>
+        <p class="muted small" style="margin:0;">Counting restarts from now.</p>`,
+      onSubmit: async (form) => {
+        const res = await api('POST', '/api/insights/supplies/refill', { printer, kind, capacity: parseInt(form.querySelector('#refill-cap').value, 10) });
+        suppliesData = res.printers;
+        renderSupplies();
+      }
+    });
+  });
+}
+
+async function loadSupplies() {
+  ({ printers: suppliesData } = await api('GET', '/api/insights/supplies'));
+  renderSupplies();
+}
+
+function renderSupplies() {
+  $('supplies-wrap').innerHTML = suppliesData.length === 0 ? '<p class="muted" style="margin:0;">Printers appear here once an agent reports jobs.</p>'
+    : suppliesData.map((p) => `<div class="supply"><strong>${escapeHtml(p.printer)}</strong>${p.supplies.map((s) => {
+      const label = s.kind === 'paper' ? 'Paper' : 'Toner';
+      if (!s.tracked) {
+        return `<div class="spread small"><span>${label}: not tracked${s.daily_use ? ` · uses ~${s.daily_use}/day` : ''}</span><button type="button" class="btn btn-ghost btn-sm" data-refill="${s.kind}" data-printer="${escapeHtml(p.printer)}">Start tracking</button></div>`;
+      }
+      const cls = s.status === 'empty' ? 'empty' : s.status === 'low' || s.status === 'soon' ? 'low' : '';
+      const when = s.status === 'empty' ? 'probably empty' : s.days_left === null ? 'no recent use' : `lasts ~${s.days_left < 1 ? 'under a day' : plural(Math.round(s.days_left), 'day')}`;
+      return `<div class="stack" style="gap:4px;">
+        <div class="spread small"><span>${label}: ${s.remaining} of ${s.capacity} ${s.kind === 'paper' ? 'sheets' : 'pages'} · ${escapeHtml(when)}</span><button type="button" class="btn btn-ghost btn-sm" data-refill="${s.kind}" data-printer="${escapeHtml(p.printer)}">${s.kind === 'paper' ? 'Refilled' : 'Replaced'}</button></div>
+        <div class="meter ${cls}"><div style="width:${s.percent}%"></div></div>
+      </div>`;
+    }).join('')}</div>`).join('');
+}
+
+// ---------------------------------------------------------------
 // Products (admin)
 // ---------------------------------------------------------------
 let productList = [];
@@ -1392,6 +1595,7 @@ function openProductModal(p) {
       <div class="form-grid">
         <div class="field full"><label for="pm-name">Name</label><input id="pm-name" required maxlength="200" value="${escapeHtml(v.name)}"></div>
         <div class="field"><label for="pm-price">Price (${escapeHtml(currentSettings.currency)})</label><input id="pm-price" type="number" min="0" step="0.01" required value="${escapeHtml(String(v.price))}"></div>
+        <div class="field"><label for="pm-cost">Cost price (optional, for margins)</label><input id="pm-cost" type="number" min="0" step="0.01" value="${v.cost_price != null ? escapeHtml(String(v.cost_price)) : ''}"></div>
         <div class="field"><label for="pm-sku">SKU / barcode (optional)</label><input id="pm-sku" maxlength="100" value="${escapeHtml(v.sku || '')}"></div>
         <div class="field"><label for="pm-category">Category (optional)</label><input id="pm-category" list="pm-cats" maxlength="100" value="${escapeHtml(v.category || '')}"><datalist id="pm-cats">${cats.map((c) => `<option value="${escapeHtml(c)}">`).join('')}</datalist></div>
         <div class="field"><label for="pm-print">Print service</label>
@@ -1416,6 +1620,7 @@ function openProductModal(p) {
       const payload = {
         name: val('#pm-name').trim(),
         price: parseFloat(val('#pm-price')),
+        cost_price: val('#pm-cost') === '' ? null : parseFloat(val('#pm-cost')),
         sku: val('#pm-sku').trim(),
         category: val('#pm-category').trim(),
         print_color_mode: val('#pm-print') || null,

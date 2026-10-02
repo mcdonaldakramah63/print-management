@@ -19,6 +19,13 @@
 // ---------------------------------------------------------------
 const db = require('../db');
 
+// Loaded lazily: insights/traffic requires this module's dependencies too.
+let trafficModule = null;
+function isOffHours(date) {
+  if (!trafficModule) trafficModule = require('./insights/traffic');
+  try { return trafficModule.isOffHours(date); } catch (_) { return false; }
+}
+
 const GAP = { defaultSec: 180, minSec: 90, maxSec: 600, factor: 3 };
 const BURST = { jobs: 3, windowSec: 60 };
 const HISTORY_DAYS = 30;
@@ -271,6 +278,9 @@ function recomputeSession(sessionId) {
     if (coverage[i] === 'split') jobFlags[i].add('split');
     if (job.copies > 1) jobFlags[i].add('copies');
     if (job.color_mode !== 'color' && job.color_mode !== 'mono') jobFlags[i].add('mode_unknown');
+    // Printed when the shop is normally closed (opening hours learned from sales).
+    const submitted = new Date(ts(job.submitted_at));
+    if (!Number.isNaN(submitted.getTime()) && isOffHours(submitted)) jobFlags[i].add('off_hours');
     updateJobAnalysis.run(estimates[i].pages, estimates[i].source, coverage[i], JSON.stringify([...jobFlags[i]]), job.id);
   });
 
@@ -284,7 +294,7 @@ function recomputeSession(sessionId) {
   const flags = [];
   if (burst >= BURST.jobs) flags.push({ type: 'burst', jobs: burst, seconds: BURST.windowSec });
   if (concurrent >= 2) flags.push({ type: 'concurrent', jobs: concurrent });
-  for (const f of ['partial', 'split', 'reprint', 'copies', 'mode_unknown']) {
+  for (const f of ['off_hours', 'partial', 'split', 'reprint', 'copies', 'mode_unknown']) {
     const n = count(f);
     if (n) flags.push({ type: f, jobs: n });
   }

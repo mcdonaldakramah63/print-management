@@ -122,8 +122,9 @@ function createSale({
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertItem = db.prepare(`
-    INSERT INTO sale_items (sale_id, name, qty, unit_price, line_total, product_id) VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO sale_items (sale_id, name, qty, unit_price, line_total, product_id, unit_cost) VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
+  const productCost = db.prepare('SELECT cost_price FROM products WHERE id = ?');
 
   const linkSession = db.prepare(`
     UPDATE print_sessions SET sale_id = ?, billed_at = datetime('now') WHERE id = ? AND sale_id IS NULL
@@ -141,7 +142,9 @@ function createSale({
     const id = info.lastInsertRowid;
     for (const item of items) {
       const productId = item.product_id ? Number(item.product_id) : null;
-      insertItem.run(id, String(item.name).trim(), item.qty, item.unit_price, round2(item.qty * item.unit_price), productId);
+      const cost = productId ? productCost.get(productId) : null;
+      insertItem.run(id, String(item.name).trim(), item.qty, item.unit_price, round2(item.qty * item.unit_price), productId,
+        cost && cost.cost_price != null ? cost.cost_price : null);
       if (productId) moveStock({ productId, delta: -item.qty, reason: 'sale', saleId: id, userId });
     }
     // Print sessions rung up in this sale are marked billed; a session can
