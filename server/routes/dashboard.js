@@ -1,6 +1,8 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { reconcile } = require('./reconciliation');
+const { localDateString } = require('../lib/dates');
 
 const router = express.Router();
 
@@ -62,7 +64,33 @@ router.get('/summary', requireAuth, (req, res) => {
     LIMIT 10
   `).all();
 
-  res.json({ today, last7Days, thisMonth, dailySeries, topItems, lowStock });
+  const paymentMix = db.prepare(`
+    SELECT payment_method AS method, COUNT(*) AS count, SUM(total) AS revenue
+    FROM sales WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime')
+    GROUP BY payment_method ORDER BY revenue DESC
+  `).all();
+
+  // Today's printing, and pages printed vs sold (admins only — cashiers
+  // don't see print monitoring).
+  let printing = null;
+  if (req.session.user.role === 'admin') {
+    const todayKey = localDateString();
+    const rec = reconcile(todayKey, todayKey);
+    const r = rec.rows[0] || { color_printed: 0, mono_printed: 0, unknown_printed: 0, color_sold: 0, mono_sold: 0, gap: 0, estimated_value: 0 };
+    printing = {
+      pages: r.color_printed + r.mono_printed + r.unknown_printed,
+      color_pages: r.color_printed,
+      mono_pages: r.mono_printed,
+      pages_sold: r.color_sold + r.mono_sold,
+      gap: r.gap,
+      estimated_value: r.estimated_value,
+      has_print_services: rec.printServices.length > 0
+    };
+  }
+
+  const closedToday = !!db.prepare('SELECT 1 FROM day_closings WHERE business_date = ?').get(localDateString());
+
+  res.json({ today, last7Days, thisMonth, dailySeries, topItems, lowStock, paymentMix, printing, closedToday });
 });
 
 module.exports = router;

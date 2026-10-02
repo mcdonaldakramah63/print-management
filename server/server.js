@@ -21,6 +21,8 @@ const productRoutes = require('./routes/products');
 const dashboardRoutes = require('./routes/dashboard');
 const agentRoutes = require('./routes/agents');
 const printJobRoutes = require('./routes/printJobs');
+const reportRoutes = require('./routes/reports');
+const { router: reconciliationRoutes } = require('./routes/reconciliation');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -50,6 +52,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/print-jobs', printJobRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/reconciliation', reconciliationRoutes);
 
 app.get('/', (req, res) => res.redirect('/login.html'));
 

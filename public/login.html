@@ -6,60 +6,55 @@
 <title>Sign in · Receipt System</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
-<style>
-  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .login-card { width: 340px; }
-  .login-brand { text-align: center; margin-bottom: 22px; }
-  .login-brand h1 { font-size: 20px; }
-  .login-brand .sub { color: var(--ink-soft); font-size: 13px; }
-  .hint { margin-top: 16px; font-size: 12px; color: var(--ink-soft); text-align: center; }
-</style>
 </head>
 <body>
-  <div class="card login-card">
-    <div class="login-brand">
-      <span style="display:inline-flex; width:40px; height:40px; border-radius:10px; background:var(--accent); color:#04120c; align-items:center; justify-content:center; font-weight:800; font-size:19px; margin-bottom:10px;">R</span>
-      <h1>Receipt System</h1>
-      <div class="sub">Sign in to record and print sales</div>
-    </div>
-    <form id="login-form">
+  <main class="login-page">
+    <form class="card login-card" id="login-form">
+      <div class="row" style="gap:12px; flex-wrap:nowrap;">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <div><h1 style="font-size:22px;">Receipt System</h1><p class="muted" style="margin:2px 0 0;">Sign in to record and print sales</p></div>
+      </div>
       <div class="field">
         <label for="username">Username</label>
-        <input id="username" name="username" autocomplete="username" required>
+        <input id="username" name="username" autocomplete="username" required autofocus>
       </div>
       <div class="field">
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
-      <button class="btn btn-accent" type="submit" style="width:100%; justify-content:center;">Sign in</button>
-      <div class="error-text" id="login-error" style="display:none;"></div>
+      <div class="error-text" id="login-error" role="alert" hidden></div>
+      <button class="btn btn-primary btn-lg btn-block" type="submit">Sign in</button>
+      <p class="muted small" style="margin:0; text-align:center;">First run? The default admin is <strong>admin</strong> / <strong>admin123</strong>. Change it right after signing in.</p>
     </form>
-    <div class="hint">Default admin login is <strong>admin</strong> / <strong>admin123</strong> on first run &mdash; change it right after signing in.</div>
-  </div>
+  </main>
 
   <script src="js/api.js"></script>
   <script>
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const errorEl = document.getElementById('login-error');
-      errorEl.style.display = 'none';
-      const username = document.getElementById('username').value.trim();
-      const password = document.getElementById('password').value;
+      const btn = e.target.querySelector('button[type=submit]');
+      errorEl.hidden = true;
+      btn.disabled = true;
       try {
-        await api('POST', '/api/auth/login', { username, password });
+        await api('POST', '/api/auth/login', {
+          username: document.getElementById('username').value.trim(),
+          password: document.getElementById('password').value
+        });
         window.location.href = 'app.html';
       } catch (err) {
         errorEl.textContent = err.message;
-        errorEl.style.display = 'block';
+        errorEl.hidden = false;
+        btn.disabled = false;
       }
     });
 
     // If already logged in, skip straight to the app.
     api('GET', '/api/auth/me').then((data) => {
       if (data.user) window.location.href = 'app.html';
-    });
+    }).catch(() => { /* stay on the login form */ });
   </script>
 </body>
 </html>

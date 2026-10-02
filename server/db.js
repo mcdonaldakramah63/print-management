@@ -115,6 +115,38 @@ CREATE TABLE IF NOT EXISTS print_jobs (
 );
 `);
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id  INTEGER NOT NULL REFERENCES products(id),
+  delta       REAL NOT NULL,
+  reason      TEXT NOT NULL CHECK (reason IN ('initial','sale','void','adjust','edit')),
+  sale_id     INTEGER REFERENCES sales(id),
+  user_id     INTEGER REFERENCES users(id),
+  note        TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id, created_at);
+
+-- One row per closed business day (local date, YYYY-MM-DD): the end-of-day
+-- "Z-report" snapshot, frozen when the day is closed.
+CREATE TABLE IF NOT EXISTS day_closings (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  business_date  TEXT UNIQUE NOT NULL,
+  sales_count    INTEGER NOT NULL,
+  voided_count   INTEGER NOT NULL,
+  gross_total    REAL NOT NULL,
+  cash_total     REAL NOT NULL,
+  momo_total     REAL NOT NULL,
+  card_total     REAL NOT NULL,
+  cash_counted   REAL NOT NULL,
+  variance       REAL NOT NULL,
+  note           TEXT NOT NULL DEFAULT '',
+  closed_by      INTEGER NOT NULL REFERENCES users(id),
+  closed_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
 // ---------- Lightweight migrations for upgrading an older DB ----------
 function ensureColumn(table, column, ddl) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
@@ -128,13 +160,22 @@ ensureColumn('products', 'print_color_mode', "print_color_mode TEXT CHECK (print
 ensureColumn('print_jobs', 'color_mode', "color_mode TEXT CHECK (color_mode IN ('color','mono','unknown'))");
 ensureColumn('print_jobs', 'duplex', "duplex TEXT CHECK (duplex IN ('duplex','simplex','unknown'))");
 ensureColumn('print_jobs', 'note', "note TEXT NOT NULL DEFAULT ''");
-// matched_product_id / sale_id / auto_billed / products.print_color_mode / settings.require_manual_print_review
+// products.print_color_mode marks a product as a colour or B&W print service;
+// the printed-vs-sold reconciliation counts its quantity sold as pages.
+// matched_product_id / sale_id / auto_billed / settings.require_manual_print_review
 // are legacy columns from a removed auto-billing feature. Left in place (harmless,
 // unused) rather than dropped, so upgrading an existing database never loses data.
 ensureColumn('print_jobs', 'matched_product_id', 'matched_product_id INTEGER REFERENCES products(id)');
 ensureColumn('print_jobs', 'sale_id', 'sale_id INTEGER REFERENCES sales(id)');
 ensureColumn('print_jobs', 'auto_billed', 'auto_billed INTEGER NOT NULL DEFAULT 0');
 ensureColumn('settings', 'require_manual_print_review', 'require_manual_print_review INTEGER NOT NULL DEFAULT 0');
+ensureColumn('sales', 'payment_method', "payment_method TEXT NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash','momo','card'))");
+ensureColumn('sales', 'amount_tendered', 'amount_tendered REAL');
+ensureColumn('sales', 'change_due', 'change_due REAL');
+ensureColumn('sales', 'customer_phone', "customer_phone TEXT NOT NULL DEFAULT ''");
+ensureColumn('sales', 'voided_at', 'voided_at TEXT');
+ensureColumn('sales', 'voided_by', 'voided_by INTEGER REFERENCES users(id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)');
 
 // ---------- Seed default settings row ----------
 const settingsExists = db.prepare('SELECT 1 FROM settings WHERE id = 1').get();

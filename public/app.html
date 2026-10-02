@@ -6,315 +6,307 @@
 <title>Receipt System</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400..600,0..1,0" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div class="app-shell">
-  <nav class="sidebar">
-    <div class="sidebar-brand" style="display:flex; align-items:center; gap:10px;">
-      <span style="width:28px; height:28px; border-radius:7px; background:var(--accent); color:#04120c; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px; flex-shrink:0;">R</span>
-      <span>Receipt System<span class="sub" id="brand-business">&nbsp;</span></span>
+  <nav class="sidebar" aria-label="Main">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <span><span class="brand-name">Receipt System</span><span class="brand-sub" id="brand-business">&nbsp;</span></span>
     </div>
-    <a class="nav-link" data-view="dashboard" href="#dashboard"><span class="material-symbols-outlined nav-icon">space_dashboard</span>Dashboard</a>
-    <a class="nav-link" data-view="sale" href="#sale"><span class="material-symbols-outlined nav-icon">add_circle</span>New Sale</a>
-    <a class="nav-link" data-view="history" href="#history"><span class="material-symbols-outlined nav-icon">receipt_long</span>Sales History</a>
-    <a class="nav-link admin-only" data-view="products" href="#products"><span class="material-symbols-outlined nav-icon">inventory_2</span>Products</a>
-    <a class="nav-link admin-only" data-view="print-monitor" href="#print-monitor"><span class="material-symbols-outlined nav-icon">print</span>Print Monitoring</a>
-    <a class="nav-link admin-only" data-view="users" href="#users"><span class="material-symbols-outlined nav-icon">group</span>Users</a>
-    <a class="nav-link admin-only" data-view="settings" href="#settings"><span class="material-symbols-outlined nav-icon">tune</span>Business Settings</a>
-    <a class="nav-link" data-view="account" href="#account"><span class="material-symbols-outlined nav-icon">manage_accounts</span>My Account</a>
+
+    <a class="nav-link" data-view="dashboard" href="#dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard</a>
+    <a class="nav-link" data-view="sale" href="#sale"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>New sale</a>
+    <a class="nav-link" data-view="history" href="#history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>Sales history</a>
+    <a class="nav-link" data-view="reports" href="#reports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Reports &amp; close</a>
+
+    <div class="nav-section admin-only">Print shop</div>
+    <a class="nav-link admin-only" data-view="print-monitor" href="#print-monitor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5"/><rect x="3" y="8" width="18" height="9" rx="2"/><path d="M7 14h10v7H7z"/></svg>Print monitor<span class="count" id="unreviewed-count" hidden></span></a>
+    <a class="nav-link admin-only" data-view="reconcile" href="#reconcile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg>Printed vs sold</a>
+
+    <div class="nav-section admin-only">Manage</div>
+    <a class="nav-link admin-only" data-view="products" href="#products"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>Products</a>
+    <a class="nav-link admin-only" data-view="users" href="#users"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0M17 4a4 4 0 0 1 0 8M22 21a7 7 0 0 0-4-6.3"/></svg>Users</a>
+    <a class="nav-link admin-only" data-view="settings" href="#settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Settings</a>
+    <a class="nav-link" data-view="account" href="#account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>My account</a>
+
     <div class="nav-spacer"></div>
     <div class="nav-user">
-      <span class="name" id="nav-user-name"></span>
-      <span class="role" id="nav-user-role"></span>
-    </div>
-    <div style="padding: 12px 20px;">
-      <button class="btn btn-outline btn-sm" id="logout-btn" style="width:100%; justify-content:center;">Log out</button>
+      <span class="avatar" id="nav-avatar" aria-hidden="true"></span>
+      <span class="who"><b id="nav-user-name"></b><span id="nav-user-role"></span></span>
+      <button class="btn-side" id="logout-btn" type="button">Log out</button>
     </div>
   </nav>
 
   <main class="main">
 
     <!-- ============ DASHBOARD ============ -->
-    <section class="view" id="view-dashboard">
-      <div class="page-header"><h2>Dashboard</h2></div>
-
-      <div class="kpi-grid">
-        <div class="card kpi-card">
-          <div class="kpi-label">Today</div>
-          <div class="kpi-value" id="kpi-today-revenue">&mdash;</div>
-          <div class="kpi-sub" id="kpi-today-count"></div>
+    <section class="view" id="view-dashboard" aria-labelledby="h-dashboard">
+      <div class="page-head">
+        <div><span class="eyebrow" id="dash-date"></span><h1 id="h-dashboard">Dashboard</h1></div>
+        <a class="btn btn-primary" href="#sale" data-nav="sale">New sale</a>
+      </div>
+      <div class="callout info" id="dash-closed" hidden>Today has been closed. New sales are blocked until an admin reopens the day in Reports.</div>
+      <div class="grid grid-4" id="dash-kpis"></div>
+      <div class="grid grid-2-1">
+        <div class="card">
+          <div class="card-head"><h2>Revenue, last 14 days</h2></div>
+          <div class="bar-chart" id="dash-chart" role="img" aria-label="Revenue per day for the last 14 days"></div>
+          <div class="bar-axis" id="dash-chart-axis"></div>
         </div>
-        <div class="card kpi-card">
-          <div class="kpi-label">Last 7 days</div>
-          <div class="kpi-value" id="kpi-week-revenue">&mdash;</div>
-          <div class="kpi-sub" id="kpi-week-count"></div>
-        </div>
-        <div class="card kpi-card">
-          <div class="kpi-label">This month</div>
-          <div class="kpi-value" id="kpi-month-revenue">&mdash;</div>
-          <div class="kpi-sub" id="kpi-month-count"></div>
+        <div class="card stack">
+          <h2>Payment mix today</h2>
+          <div id="dash-mix" class="stack"></div>
+          <div id="dash-print-callout"></div>
         </div>
       </div>
-
-      <div class="dash-grid">
+      <div class="grid grid-2">
         <div class="card">
-          <h3 style="font-size:15px;">Revenue &ndash; last 14 days</h3>
-          <canvas id="revenue-chart" width="640" height="220"></canvas>
+          <div class="card-head"><h2>Top items, last 30 days</h2></div>
+          <div id="dash-top"></div>
         </div>
         <div class="card">
-          <h3 style="font-size:15px;">Top items &ndash; last 30 days</h3>
-          <div id="top-items-wrap"></div>
+          <div class="card-head"><h2>Low stock</h2></div>
+          <div id="dash-low"></div>
         </div>
-      </div>
-
-      <div class="card" id="low-stock-card" style="margin-top:20px; display:none;">
-        <h3 style="font-size:15px;">Low stock</h3>
-        <div id="low-stock-wrap"></div>
       </div>
     </section>
 
     <!-- ============ NEW SALE ============ -->
-    <section class="view" id="view-sale">
-      <div class="page-header"><h2>New Sale</h2></div>
-      <div class="card">
-        <form id="sale-form">
-          <div class="field">
-            <label for="customer-name">Customer name (optional)</label>
-            <input id="customer-name" placeholder="Walk-in customer">
+    <section class="view" id="view-sale" aria-labelledby="h-sale">
+      <div class="page-head">
+        <div><span class="eyebrow">Checkout</span><h1 id="h-sale">New sale</h1></div>
+      </div>
+      <div class="callout info" id="sale-closed" hidden>Today has been closed. An admin must reopen it in Reports before more sales can be recorded.</div>
+      <div class="checkout">
+        <section class="card stack" aria-label="Product catalog">
+          <div class="row">
+            <label class="sr-only" for="catalog-search">Search products</label>
+            <input class="input input-lg" id="catalog-search" placeholder="Search products or SKU" style="flex:1; min-width:180px;" autocomplete="off">
+            <button class="btn btn-outline" type="button" id="add-custom-btn" style="height:44px;">+ Custom item</button>
           </div>
+          <div class="chips" id="catalog-cats" role="group" aria-label="Categories"></div>
+          <div class="tiles" id="catalog-tiles"></div>
+        </section>
 
-          <label>Items</label>
-          <div class="item-row-header muted">
-            <span>Item (type to search products, or enter a custom item)</span>
-            <span>Qty</span><span>Unit price</span><span>Amount</span><span></span>
+        <section class="card cart" aria-label="Current sale">
+          <div class="spread"><h2>Current sale</h2><button class="btn btn-ghost btn-sm" type="button" id="clear-cart-btn">Clear</button></div>
+          <div class="form-grid">
+            <div class="field"><label for="customer-name">Customer</label><input id="customer-name" placeholder="Walk-in customer" maxlength="200"></div>
+            <div class="field"><label for="customer-phone">Phone (optional)</label><input id="customer-phone" type="tel" maxlength="40"></div>
           </div>
-          <div id="item-rows"></div>
-          <datalist id="products-datalist"></datalist>
-          <button type="button" class="btn btn-outline btn-sm" id="add-item-btn">+ Add item</button>
-
-          <div class="field-row" style="margin-top:20px;">
-            <div class="field">
-              <label for="discount-value">Discount</label>
-              <div style="display:flex; gap:8px;">
-                <input id="discount-value" type="number" min="0" step="0.01" value="0" style="flex:1;">
-                <select id="discount-type" style="width:110px;">
-                  <option value="amount">Amount</option>
-                  <option value="percent">Percent</option>
-                </select>
-              </div>
-            </div>
-            <div class="field">
-              <label>Tax rate</label>
-              <input id="tax-rate-display" disabled>
-            </div>
+          <div class="cart-lines" id="cart-lines"></div>
+          <div class="discount-row">
+            <div class="field"><label for="discount-value">Discount</label><input id="discount-value" type="number" min="0" step="0.01" value="0"></div>
+            <div class="field"><label for="discount-type">Type</label><select id="discount-type"><option value="amount">Amount</option><option value="percent">Percent</option></select></div>
           </div>
-
-          <div class="totals-box">
-            <div class="totals-row"><span>Subtotal</span><span id="calc-subtotal">0.00</span></div>
-            <div class="totals-row"><span>Discount</span><span id="calc-discount">0.00</span></div>
-            <div class="totals-row"><span>Tax</span><span id="calc-tax">0.00</span></div>
-            <div class="totals-row grand"><span>Total</span><span id="calc-total">0.00</span></div>
+          <div class="totals">
+            <div class="t-row"><span>Subtotal</span><span id="calc-subtotal">0.00</span></div>
+            <div class="t-row"><span>Discount</span><span id="calc-discount">0.00</span></div>
+            <div class="t-row"><span id="calc-tax-label">Tax</span><span id="calc-tax">0.00</span></div>
+            <div class="t-row t-grand"><span>Total</span><span id="calc-total">0.00</span></div>
           </div>
-
-          <div class="error-text" id="sale-error" style="display:none; margin-top:14px;"></div>
-
-          <div style="margin-top:18px;">
-            <button class="btn btn-accent" type="submit">Complete Sale &amp; Print Receipt</button>
+          <div class="segmented" id="pay-methods" role="group" aria-label="Payment method">
+            <button type="button" data-pay="cash" class="active" aria-pressed="true">Cash</button>
+            <button type="button" data-pay="momo" aria-pressed="false">Mobile money</button>
+            <button type="button" data-pay="card" aria-pressed="false">Card</button>
           </div>
-        </form>
+          <div class="form-grid" id="cash-fields">
+            <div class="field"><label for="amount-tendered">Amount tendered</label><input id="amount-tendered" class="input-money input-lg" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Exact"></div>
+            <div class="change-box" id="change-box"><span>Change due</span><strong id="change-due">0.00</strong></div>
+          </div>
+          <div class="error-text" id="sale-error" hidden></div>
+          <button class="btn btn-primary btn-lg btn-block" type="button" id="complete-sale-btn">Complete sale &amp; print receipt</button>
+        </section>
       </div>
     </section>
 
     <!-- ============ HISTORY ============ -->
-    <section class="view" id="view-history">
-      <div class="page-header">
-        <h2>Sales History</h2>
+    <section class="view" id="view-history" aria-labelledby="h-history">
+      <div class="page-head">
+        <div><span class="eyebrow">Sales</span><h1 id="h-history">Sales history</h1></div>
+        <a class="btn btn-outline" id="history-export" href="#">Export CSV</a>
       </div>
-      <div class="card" style="margin-bottom:16px;">
-        <div class="field-row" style="align-items:end;">
+      <form class="card" id="history-filters">
+        <div class="row" style="align-items:flex-end;">
           <div class="field"><label for="filter-from">From</label><input id="filter-from" type="date"></div>
           <div class="field"><label for="filter-to">To</label><input id="filter-to" type="date"></div>
-          <div class="field"><label for="filter-q">Search receipt # / customer</label><input id="filter-q" placeholder="e.g. RCT-20260919"></div>
-          <div class="field" style="flex:0;"><button class="btn btn-outline" id="filter-btn">Filter</button></div>
+          <div class="field"><label for="filter-pay">Payment</label><select id="filter-pay"><option value="">All</option><option value="cash">Cash</option><option value="momo">Mobile money</option><option value="card">Card</option></select></div>
+          <div class="field"><label for="filter-status">Status</label><select id="filter-status"><option value="">All</option><option value="completed">Completed</option><option value="voided">Voided</option></select></div>
+          <div class="field" style="flex:1; min-width:200px;"><label for="filter-q">Receipt, customer or phone</label><input id="filter-q" placeholder="e.g. RCT-20261002"></div>
+          <button class="btn btn-primary" type="submit">Filter</button>
+        </div>
+      </form>
+      <div class="card">
+        <div class="spread" style="margin-bottom:8px;"><span class="muted" id="history-summary"></span></div>
+        <div class="table-wrap" id="history-table-wrap"></div>
+        <div class="pagination" id="history-pages"></div>
+      </div>
+    </section>
+
+    <!-- ============ REPORTS & CLOSE ============ -->
+    <section class="view" id="view-reports" aria-labelledby="h-reports">
+      <div class="page-head">
+        <div><span class="eyebrow">Reports</span><h1 id="h-reports">Sales report</h1></div>
+        <form class="page-actions" id="report-filters">
+          <div class="field"><label for="report-from">From</label><input id="report-from" type="date"></div>
+          <div class="field"><label for="report-to">To</label><input id="report-to" type="date"></div>
+          <button class="btn btn-primary" type="submit">Run</button>
+          <a class="btn btn-outline" id="report-export" href="#">Export CSV</a>
+        </form>
+      </div>
+      <div class="grid grid-4" id="report-kpis"></div>
+      <div class="grid reports-layout">
+        <div class="stack">
+          <div class="grid grid-2">
+            <div class="card"><h2 style="margin-bottom:10px;">By item</h2><div id="report-items"></div></div>
+            <div class="card stack">
+              <div><h2 style="margin-bottom:10px;">By cashier</h2><div id="report-cashiers"></div></div>
+              <div><h2 style="margin-bottom:10px;">By payment</h2><div id="report-payments"></div></div>
+            </div>
+          </div>
+          <div class="card"><h2 style="margin-bottom:10px;">Recent day closings</h2><div class="table-wrap" id="closings-wrap"></div></div>
+        </div>
+        <section class="card card-dark stack" aria-labelledby="h-close" id="close-card">
+          <div>
+            <span class="eyebrow" style="color:var(--side-mute)">End-of-day close</span>
+            <h2 id="h-close" style="font-size:20px; margin-bottom:10px;"></h2>
+            <div class="field"><label for="close-date">Business day</label><input type="date" id="close-date"></div>
+          </div>
+          <div class="z-lines" id="close-lines"></div>
+          <div id="close-form-wrap" class="stack">
+            <div class="field"><label for="cash-counted">Cash counted in drawer</label><input id="cash-counted" class="input-money input-lg" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div id="close-variance"></div>
+            <div class="field"><label for="close-note">Note (optional)</label><input id="close-note" maxlength="500" placeholder="e.g. change given from float"></div>
+            <div class="error-text" id="close-error" hidden></div>
+            <button class="btn btn-light btn-lg btn-block" type="button" id="close-day-btn">Close the day &amp; print Z-report</button>
+          </div>
+          <div id="closed-info" class="stack" hidden></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============ PRINT MONITOR (admin) ============ -->
+    <section class="view" id="view-print-monitor" aria-labelledby="h-pm">
+      <div class="page-head">
+        <div><span class="eyebrow">Print shop</span><h1 id="h-pm">Print monitor</h1></div>
+        <div class="page-actions">
+          <div class="field"><label for="summary-date">Day</label><input id="summary-date" type="date"></div>
         </div>
       </div>
-      <div class="card">
-        <div id="history-table-wrap"></div>
+      <div class="grid grid-4" id="summary-kpis"></div>
+      <div class="grid grid-2-1">
+        <div class="card">
+          <div class="card-head">
+            <h2>Print job log</h2>
+            <div class="row">
+              <label class="sr-only" for="pj-status">Status</label>
+              <select id="pj-status" class="input" style="width:auto;"><option value="">All jobs</option><option value="draft">Unreviewed</option><option value="approved">Reviewed</option><option value="rejected">Flagged</option></select>
+              <button class="btn btn-outline btn-sm" id="pj-bulk-review" type="button" disabled>Mark reviewed</button>
+              <button class="btn btn-outline btn-sm" id="pj-bulk-flag" type="button" disabled>Flag</button>
+            </div>
+          </div>
+          <div class="table-wrap" id="print-jobs-table-wrap"></div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <h2 style="margin-bottom:10px;">By printer</h2>
+            <div id="summary-by-printer"></div>
+          </div>
+          <div class="card stack">
+            <div class="spread"><h2>Agents</h2><button class="btn btn-outline btn-sm" type="button" id="agent-register-btn">Register agent</button></div>
+            <p class="muted small" style="margin:0;">An agent runs on a PC with a printer and reports each finished print job here. It never creates sales.</p>
+            <div id="agent-key-reveal" hidden></div>
+            <div id="agents-wrap"></div>
+          </div>
+        </div>
       </div>
+    </section>
+
+    <!-- ============ RECONCILIATION (admin) ============ -->
+    <section class="view" id="view-reconcile" aria-labelledby="h-rec">
+      <div class="page-head">
+        <div><span class="eyebrow">Print shop</span><h1 id="h-rec">Printed vs sold</h1>
+          <p class="muted" style="margin:6px 0 0; max-width:720px;">Pages the print agents saw, compared with the quantity sold of products marked as colour or B&amp;W print services. A positive gap means more was printed than sold.</p></div>
+        <form class="page-actions" id="rec-filters">
+          <div class="field"><label for="rec-from">From</label><input id="rec-from" type="date"></div>
+          <div class="field"><label for="rec-to">To</label><input id="rec-to" type="date"></div>
+          <button class="btn btn-primary" type="submit">Run</button>
+        </form>
+      </div>
+      <div id="rec-setup"></div>
+      <div class="grid grid-4" id="rec-kpis"></div>
+      <div class="card"><div class="table-wrap" id="rec-table"></div>
+        <p class="muted small" style="margin:12px 0 0;">Colour detection depends on each printer's driver. Pages with an unknown colour mode are listed separately and not counted in the gap.</p></div>
     </section>
 
     <!-- ============ PRODUCTS (admin) ============ -->
-    <section class="view" id="view-products">
-      <div class="page-header"><h2>Products</h2></div>
-      <div class="card" style="margin-bottom:16px;">
-        <h3 style="font-size:15px;" id="product-form-title">Add product</h3>
-        <form id="product-form">
-          <input type="hidden" id="p-id">
-          <div class="field-row">
-            <div class="field"><label for="p-name">Name</label><input id="p-name" required></div>
-            <div class="field"><label for="p-sku">SKU (optional)</label><input id="p-sku"></div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label for="p-category">Category (optional)</label><input id="p-category"></div>
-            <div class="field"><label for="p-price">Price</label><input id="p-price" type="number" min="0" step="0.01" required></div>
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label for="p-track-stock"><input type="checkbox" id="p-track-stock" checked style="width:auto; margin-right:6px;">Track stock for this product</label>
-            </div>
-          </div>
-          <div class="field-row" id="stock-fields">
-            <div class="field"><label for="p-stock">Stock on hand</label><input id="p-stock" type="number" step="0.01" value="0"></div>
-            <div class="field"><label for="p-reorder">Low stock alert level</label><input id="p-reorder" type="number" step="0.01" value="5"></div>
-          </div>
-          <div class="error-text" id="product-error" style="display:none;"></div>
-          <button class="btn btn-accent" type="submit" id="product-submit-btn">Add product</button>
-          <button type="button" class="btn btn-outline" id="product-cancel-btn" style="display:none;">Cancel edit</button>
-        </form>
-      </div>
-      <div class="card">
-        <div id="products-table-wrap"></div>
-      </div>
-    </section>
-
-    <!-- ============ PRINT MONITORING (admin) ============ -->
-    <section class="view" id="view-print-monitor">
-      <div class="page-header"><h2>Print Monitoring</h2></div>
-
-      <div class="card" style="margin-bottom:16px;">
-        <h3 style="font-size:15px;">Agents</h3>
-        <p class="muted" style="font-size:13px; margin-top:-6px;">
-          An agent is a small program that runs on a PC connected to a physical printer and reports print jobs here for review.
-        </p>
-        <form id="agent-form" style="display:flex; gap:10px; align-items:end; max-width:420px;">
-          <div class="field" style="flex:1; margin-bottom:0;">
-            <label for="agent-label">New agent name</label>
-            <input id="agent-label" placeholder="e.g. Front Desk PC">
-          </div>
-          <button class="btn btn-accent" type="submit">Register agent</button>
-        </form>
-        <div class="error-text" id="agent-error" style="display:none; margin-top:10px;"></div>
-        <div id="agent-key-reveal" style="display:none; margin-top:14px;"></div>
-        <div id="agents-table-wrap" style="margin-top:16px;"></div>
-      </div>
-
-      <div class="card" style="margin-bottom:16px;">
-        <div class="page-header" style="margin-bottom:12px;">
-          <h3 style="font-size:15px; margin:0;">Daily print activity</h3>
-          <input id="summary-date" type="date" style="width:auto;">
+    <section class="view" id="view-products" aria-labelledby="h-products">
+      <div class="page-head">
+        <div><span class="eyebrow">Manage</span><h1 id="h-products">Products &amp; services</h1></div>
+        <div class="page-actions">
+          <label class="sr-only" for="product-search">Search products</label>
+          <input class="input" id="product-search" placeholder="Search" style="width:200px;">
+          <button class="btn btn-primary" type="button" id="product-add-btn">Add product</button>
         </div>
-        <p class="muted" style="font-size:13px; margin-top:-4px;">
-          What was actually printed this day — compare this against what was rung up in Sales History.
-        </p>
-        <div class="kpi-grid" id="summary-kpi-grid" style="margin-top:12px; margin-bottom:0;"></div>
-        <div id="summary-by-printer" style="margin-top:14px;"></div>
       </div>
-
-      <div class="card">
-        <h3 style="font-size:15px;">Print job log</h3>
-        <p class="muted" style="font-size:13px; margin-top:-4px;">
-          Every detected print job, for reference — this doesn't create sales; use it to cross-check the till.
-        </p>
-        <div class="field-row" style="align-items:end; margin-top:10px;">
-          <div class="field">
-            <label for="pj-status">Status</label>
-            <select id="pj-status">
-              <option value="">All</option>
-              <option value="draft">Unreviewed</option>
-              <option value="approved">Reviewed</option>
-              <option value="rejected">Flagged</option>
-            </select>
-          </div>
-          <div class="field"><label for="pj-from">From</label><input id="pj-from" type="date"></div>
-          <div class="field"><label for="pj-to">To</label><input id="pj-to" type="date"></div>
-          <div class="field" style="flex:0;"><button class="btn btn-outline" id="pj-filter-btn">Filter</button></div>
-        </div>
-        <div style="margin:12px 0;">
-          <button class="btn btn-outline btn-sm" id="pj-bulk-review" disabled>Mark reviewed</button>
-          <button class="btn btn-outline btn-sm" id="pj-bulk-flag" disabled>Flag selected</button>
-        </div>
-        <div id="print-jobs-table-wrap"></div>
-      </div>
+      <div class="card"><div class="table-wrap" id="products-table-wrap"></div></div>
     </section>
 
     <!-- ============ USERS (admin) ============ -->
-    <section class="view" id="view-users">
-      <div class="page-header"><h2>Users</h2></div>
-      <div class="card" style="margin-bottom:16px;">
-        <h3 style="font-size:15px;">Add user</h3>
-        <form id="user-form">
-          <div class="field-row">
-            <div class="field"><label for="u-fullname">Full name</label><input id="u-fullname" required></div>
-            <div class="field"><label for="u-username">Username</label><input id="u-username" required></div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label for="u-password">Password</label><input id="u-password" type="password" required minlength="6"></div>
-            <div class="field">
-              <label for="u-role">Role</label>
-              <select id="u-role">
-                <option value="cashier">Cashier</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-          </div>
-          <div class="error-text" id="user-error" style="display:none;"></div>
-          <button class="btn btn-accent" type="submit">Add user</button>
-        </form>
+    <section class="view" id="view-users" aria-labelledby="h-users">
+      <div class="page-head">
+        <div><span class="eyebrow">Manage</span><h1 id="h-users">Users</h1></div>
+        <button class="btn btn-primary" type="button" id="user-add-btn">Add user</button>
       </div>
-      <div class="card">
-        <div id="users-table-wrap"></div>
-      </div>
+      <div class="card"><div class="table-wrap" id="users-table-wrap"></div></div>
     </section>
 
     <!-- ============ SETTINGS (admin) ============ -->
-    <section class="view" id="view-settings">
-      <div class="page-header"><h2>Business Settings</h2></div>
-      <div class="card">
-        <form id="settings-form">
-          <div class="field"><label for="s-business-name">Business name</label><input id="s-business-name" required></div>
-          <div class="field"><label for="s-address">Address</label><input id="s-address"></div>
-          <div class="field-row">
-            <div class="field"><label for="s-phone">Phone</label><input id="s-phone"></div>
-            <div class="field"><label for="s-email">Email</label><input id="s-email" type="email"></div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label for="s-tax-rate">Tax rate (%)</label><input id="s-tax-rate" type="number" min="0" max="100" step="0.01" required></div>
-            <div class="field"><label for="s-currency">Currency symbol/code</label><input id="s-currency" placeholder="GHS"></div>
-          </div>
+    <section class="view" id="view-settings" aria-labelledby="h-settings">
+      <div class="page-head"><div><span class="eyebrow">Manage</span><h1 id="h-settings">Business settings</h1></div></div>
+      <form class="card stack" id="settings-form" style="max-width:820px;">
+        <div class="form-grid">
+          <div class="field full"><label for="s-business-name">Business name</label><input id="s-business-name" required></div>
+          <div class="field full"><label for="s-address">Address</label><input id="s-address"></div>
+          <div class="field"><label for="s-phone">Phone</label><input id="s-phone"></div>
+          <div class="field"><label for="s-email">Email</label><input id="s-email" type="email"></div>
+          <div class="field"><label for="s-tax-rate">Tax rate (%)</label><input id="s-tax-rate" type="number" min="0" max="100" step="0.01" required></div>
+          <div class="field"><label for="s-currency">Currency</label><input id="s-currency" placeholder="GHS"></div>
           <div class="field"><label for="s-receipt-prefix">Receipt number prefix</label><input id="s-receipt-prefix" placeholder="RCT"></div>
           <div class="field"><label for="s-footer">Receipt footer note</label><input id="s-footer" placeholder="Thank you for your patronage!"></div>
-          <div class="field">
-            <label for="s-logo">Logo (optional, small image)</label>
-            <input id="s-logo" type="file" accept="image/*">
-            <img id="s-logo-preview" style="height:44px; margin-top:8px; display:none;">
+          <div class="field full">
+            <label for="s-logo">Logo (optional, under 1.5 MB)</label>
+            <div class="row"><input id="s-logo" type="file" accept="image/*"><button class="btn btn-ghost btn-sm" type="button" id="s-logo-remove">Remove logo</button></div>
+            <img id="s-logo-preview" class="logo-preview" alt="Current logo" hidden>
           </div>
-          <div class="error-text" id="settings-error" style="display:none;"></div>
-          <div class="success-text" id="settings-success" style="display:none;">Settings saved.</div>
-          <button class="btn btn-accent" type="submit">Save settings</button>
-        </form>
-      </div>
+        </div>
+        <div class="error-text" id="settings-error" hidden></div>
+        <div class="success-text" id="settings-success" hidden>Settings saved.</div>
+        <div><button class="btn btn-primary" type="submit">Save settings</button></div>
+      </form>
     </section>
 
     <!-- ============ ACCOUNT ============ -->
-    <section class="view" id="view-account">
-      <div class="page-header"><h2>My Account</h2></div>
-      <div class="card" style="max-width:420px;">
-        <h3 style="font-size:15px;">Change password</h3>
-        <form id="password-form">
-          <div class="field"><label for="cur-password">Current password</label><input id="cur-password" type="password" required></div>
-          <div class="field"><label for="new-password">New password</label><input id="new-password" type="password" required minlength="6"></div>
-          <div class="error-text" id="password-error" style="display:none;"></div>
-          <div class="success-text" id="password-success" style="display:none;">Password updated.</div>
-          <button class="btn btn-accent" type="submit">Update password</button>
-        </form>
-      </div>
+    <section class="view" id="view-account" aria-labelledby="h-account">
+      <div class="page-head"><div><span class="eyebrow">Account</span><h1 id="h-account">My account</h1></div></div>
+      <form class="card stack" id="password-form" style="max-width:420px;">
+        <h2>Change password</h2>
+        <div class="field"><label for="cur-password">Current password</label><input id="cur-password" type="password" required autocomplete="current-password"></div>
+        <div class="field"><label for="new-password">New password</label><input id="new-password" type="password" required minlength="6" autocomplete="new-password"></div>
+        <div class="field"><label for="confirm-password">Confirm new password</label><input id="confirm-password" type="password" required minlength="6" autocomplete="new-password"></div>
+        <div class="error-text" id="password-error" hidden></div>
+        <div class="success-text" id="password-success" hidden>Password updated.</div>
+        <div><button class="btn btn-primary" type="submit">Update password</button></div>
+      </form>
     </section>
 
   </main>
 </div>
+
+<div id="modal-root"></div>
 
 <script src="js/api.js"></script>
 <script src="js/app.js"></script>

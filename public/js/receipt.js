@@ -1,3 +1,5 @@
+const PAY_LABELS = { cash: 'Cash', momo: 'Mobile money', card: 'Card' };
+
 (async function init() {
   const params = new URLSearchParams(location.search);
   const id = params.get('id');
@@ -62,6 +64,7 @@
       <div>
         <div class="label">Billed to</div>
         <div>${escapeHtml(sale.customer_name) || 'Walk-in customer'}</div>
+        ${sale.customer_phone ? `<div>${escapeHtml(sale.customer_phone)}</div>` : ''}
       </div>
       <div style="text-align:right;">
         <div class="label">Served by</div>
@@ -86,6 +89,12 @@
       ${sale.discount_amount > 0 ? `<div class="row"><span>${discountLabel}</span><span>-${money(sale.discount_amount, settings.currency)}</span></div>` : ''}
       ${sale.tax_amount > 0 ? `<div class="row"><span>Tax (${sale.tax_rate}%)</span><span>${money(sale.tax_amount, settings.currency)}</span></div>` : ''}
       <div class="row grand"><span>Total</span><span>${money(sale.total, settings.currency)}</span></div>
+    </div>
+
+    <div class="r-payment">
+      <div class="row"><span>Paid by</span><span>${escapeHtml(PAY_LABELS[sale.payment_method] || sale.payment_method || 'Cash')}</span></div>
+      ${sale.amount_tendered != null ? `<div class="row"><span>Tendered</span><span>${money(sale.amount_tendered, settings.currency)}</span></div>
+      <div class="row"><span>Change</span><span>${money(sale.change_due, settings.currency)}</span></div>` : ''}
     </div>
 
     <div class="r-footer">

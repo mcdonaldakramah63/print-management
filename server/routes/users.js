@@ -53,6 +53,29 @@ router.patch('/:id/active', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// Edit a user's display name and/or role (admin only)
+router.patch('/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const fullName = req.body.full_name === undefined ? user.full_name : String(req.body.full_name).trim();
+  const role = req.body.role === undefined ? user.role : req.body.role;
+  if (!fullName) return res.status(400).json({ error: 'Full name is required' });
+  if (!['admin', 'cashier'].includes(role)) return res.status(400).json({ error: 'Role must be admin or cashier' });
+
+  if (user.role === 'admin' && role !== 'admin') {
+    if (id === req.session.user.id) {
+      return res.status(400).json({ error: 'You cannot remove your own admin role' });
+    }
+    const otherAdmins = db.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND active = 1 AND id != ?`).get(id).n;
+    if (otherAdmins === 0) return res.status(400).json({ error: 'At least one active admin is required' });
+  }
+
+  db.prepare('UPDATE users SET full_name = ?, role = ? WHERE id = ?').run(fullName, role, id);
+  res.json({ ok: true });
+});
+
 // Admin resets another user's password
 router.post('/:id/reset-password', requireAdmin, (req, res) => {
   const { newPassword } = req.body;

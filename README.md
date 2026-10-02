@@ -7,19 +7,23 @@ Built with Node.js, Express, and SQLite — no external database server to set u
 
 ## Features
 
-- **Accounts & roles** — admin and cashier logins, session-based auth, passwords hashed with bcrypt.
-- **Product catalog** — admins maintain products with price, SKU, category, and optional stock tracking. On the sale screen, typing an item name autocompletes against the catalog, auto-fills the price, and shows stock on hand; selling a catalog item automatically decrements stock. Non-catalog items can still be typed in freely.
-- **Dashboard** — today / last 7 days / this month revenue and transaction counts, a 14-day revenue chart, top-selling items (last 30 days), and a low-stock alert list.
-- **Print monitoring** — a Windows agent watches the physical print spooler and reports every finished print job (metadata only, never contents — document name, page count, color/mono, submitting user, printer). This does **not** create sales automatically; it's an independent log admins use to see what was actually printed each day — a "Daily print activity" summary (job counts, color/mono/duplex breakdown, pages) — and cross-check against what was rung up in Sales History. Each job can be marked reviewed or flagged with a note. See `agent/README.md` for setup. Architecture details below.
-- **Sales entry** — add line items, apply a discount (flat amount or %), tax is applied automatically from your settings.
-- **A5 receipts, bottom-aligned** — every sale opens a print-ready receipt sized for A5 paper, with your business name, address, logo, tax and discount breakdown, and a footer note. Content sits in the lower half of the sheet with the top left blank, rather than starting at the top.
-- **Sales history** — searchable/filterable list of past sales, reprint any receipt, admins can void a sale (kept in history, marked voided).
-- **Business settings** — business name, address, phone, email, logo, tax rate, currency, receipt number prefix, footer note (admin only).
-- **User management** — admins can add cashiers/admins, disable accounts, reset passwords.
+- **Checkout** — a product grid with category filters, search and barcode/SKU entry (type or scan the SKU and press Enter); a cart with quantity steppers and per-line price overrides; custom one-off items; flat or % discount; tax from settings. Choose **cash, mobile money or card**; for cash, enter the amount tendered and the change due is shown and printed on the receipt. Optional customer name and phone.
+- **A5 receipts, bottom-aligned** — every sale opens a print-ready receipt with your business details, logo, tax/discount breakdown, payment method, tendered and change.
+- **Sales history** — filter by date, payment method, status, receipt number, customer or phone; paginated; **CSV export**; reprint any receipt; admins can void a sale (kept in history, excluded from totals, tracked stock returned).
+- **Reports** — revenue, sales count, average sale and discounts for any date range, broken down by item, cashier and payment method, with a line-item **CSV export**.
+- **End-of-day close (Z-report)** — shows the day's takings by payment method and the cash expected in the drawer; enter the cash counted and the shortage/overage is recorded with an optional note, and a printable Z-report opens. A closed day blocks new sales and voids until an admin reopens it. Unclosed days can be printed as an X-report.
+- **Dashboard** — today / last 7 days / this month, a 14-day revenue chart, today's payment mix, top items, low-stock alerts, and (for admins) pages printed today and today's print gap.
+- **Print monitoring** — a Windows agent watches the print spooler and reports every finished job (metadata only: document name, pages, colour/mono, user, printer). Admins see a daily summary, a per-printer breakdown and a job log they can mark reviewed or flag. It never creates sales. See `agent/README.md`.
+- **Printed vs sold** — mark products as colour or B&W **print services** (1 quantity = 1 page) and this page compares, per day, pages the agents saw printed against pages actually sold, with the gap and its estimated unbilled value.
+- **Products & stock** — price, SKU, category, print-service type and optional stock tracking with a low-stock level. Every stock change (opening stock, sale, void, manual adjustment with a reason, edit) is kept in a per-product **stock history**.
+- **Accounts & roles** — admin and cashier logins (bcrypt-hashed passwords). Admins add users, edit names and roles, reset passwords and disable accounts (effective immediately). The last active admin can't be demoted.
+- **Business settings** — business name, address, phone, email, logo, tax rate, currency, receipt prefix, footer note.
+
+The UI was redesigned from a Claude Design canvas: an ink sidebar on a light paper background, Space Grotesk headings, IBM Plex Sans body text and IBM Plex Mono figures. It works down to phone width.
 
 **On fonts:** the app loads Source Serif 4, IBM Plex Sans, and IBM Plex Mono from Google Fonts for its look. This needs internet access the first time a page loads (fonts are then cached by the browser); with no internet, it falls back gracefully to system fonts — nothing breaks, it just looks plainer.
 
-If you already have a `data/receipts.db` from an earlier version, it's fine — the app migrates it automatically on startup (adds new tables like `products`, `agents`, and `print_jobs`, and links sale items to products, without touching your existing sales history).
+If you already have a `data/receipts.db` from an earlier version, it's fine — the app migrates it automatically on startup (adds new tables and columns such as payment details, `stock_movements` and `day_closings`, without touching your existing sales history; older sales are treated as cash).
 
 ## Requirements
 
@@ -50,11 +54,13 @@ password: admin123   (or whatever DEFAULT_ADMIN_PASSWORD you set in .env)
 
 1. **Settings** (admin) — fill in your business name, address, phone, tax rate, currency, and optionally upload a small logo.
 2. **Users** (admin) — add a login for each cashier.
-3. **Products** (admin) — add the things you sell, with a price and (optionally) stock on hand and a low-stock alert level. Untick "Track stock" for services or items you don't want to count.
-4. **New Sale** — start typing an item name to pick it from your catalog (price and stock fill in automatically), or type a name that isn't in the catalog for a one-off item. Add a discount if needed, then complete the sale — a print-ready A5 receipt opens in a new tab.
-5. **Sales History** — search by receipt number or customer, filter by date, reprint any past receipt.
-6. **Dashboard** — see today/week/month revenue, a 14-day trend, your best sellers, and what's running low.
-7. **Print Monitoring** (admin) — register an agent for each printer-connected PC and install it there (see `agent/README.md`). From then on, every finished print job shows up in the log with its detected type, and the "Daily print activity" panel totals up the day so you can compare it against what was recorded as sales.
+3. **Products** (admin) — add the things you sell, with a price, a category and (optionally) stock on hand and a low-stock alert level. Untick "Track stock" for services. Set **Print service** to Colour or B&W on your per-page print products so printing can be compared with sales.
+4. **New Sale** — tap products (or search / scan a SKU) to add them, use "+ Custom item" for one-offs, pick the payment method, enter the cash tendered, then complete the sale — a print-ready A5 receipt opens in a new tab.
+5. **Sales History** — search and filter past sales, export them to CSV, reprint any receipt.
+6. **Reports & close** — run a report for any date range; at the end of each day count the cash drawer and close the day to print the Z-report.
+7. **Dashboard** — today/week/month revenue, a 14-day trend, payment mix, best sellers and what's running low.
+8. **Print monitor** (admin) — register an agent for each printer-connected PC and install it there (see `agent/README.md`). Every finished print job then shows up in the log.
+9. **Printed vs sold** (admin) — once your print products are marked as colour/B&W print services, compare pages printed with pages sold each day.
 
 ## Print monitoring architecture
 
@@ -94,7 +100,11 @@ receipt-system/
 │   ├── middleware/
 │   │   ├── auth.js         Session auth guards
 │   │   └── agentAuth.js    Print agent API-key auth
-│   ├── lib/saleCreator.js  Sale creation, totals, receipt numbers
+│   ├── lib/
+│   │   ├── saleCreator.js  Sale creation, totals, payments, receipt numbers
+│   │   ├── stock.js        Stock changes + stock history log
+│   │   ├── dates.js        Local business-date helpers
+│   │   └── csv.js          CSV export helper
 │   └── routes/
 │       ├── auth.js         Login, logout, change password
 │       ├── users.js        User management (admin)
@@ -103,11 +113,14 @@ receipt-system/
 │       ├── products.js     Product catalog + stock (admin)
 │       ├── dashboard.js     Summary stats for the dashboard
 │       ├── agents.js        Print monitor agent registration (admin)
-│       └── printJobs.js     Print job ingest (agent) + review queue (admin)
+│       ├── printJobs.js     Print job ingest (agent) + review queue (admin)
+│       ├── reports.js       Date-range reports, CSV export, end-of-day close
+│       └── reconciliation.js Pages printed vs pages sold
 ├── public/
 │   ├── login.html
-│   ├── app.html             Main app shell (sidebar + views: dashboard, sale, history, products, print monitoring, users, settings, account)
+│   ├── app.html             Main app shell (sidebar + views: dashboard, sale, history, reports, print monitor, printed vs sold, products, users, settings, account)
 │   ├── receipt.html         A5 print view
+│   ├── zreport.html         End-of-day Z-report print view
 │   ├── css/
 │   │   ├── style.css        App UI styling
 │   │   └── print.css        A5 receipt layout

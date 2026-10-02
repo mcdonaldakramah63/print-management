@@ -14,14 +14,14 @@
 * { box-sizing: border-box; }
 
 /* This page has two layers with deliberately different identities:
-   the on-screen CHROME (this toolbar + the dark surrounding background)
-   matches the app's dark console theme, while the .receipt-page itself
+   the on-screen CHROME (this toolbar + the surrounding background)
+   matches the app's ink-and-paper theme, while the .receipt-page itself
    stays a light paper look, since that's what actually gets printed —
    a dark receipt would waste ink/toner and just looks wrong on paper. */
 html, body {
   margin: 0;
   padding: 0;
-  background: #0b0f17;
+  background: #E4E5E0;
   font-family: var(--sans);
   color: var(--ink);
 }
@@ -29,9 +29,9 @@ html, body {
 .toolbar {
   position: sticky;
   top: 0;
-  background: #080f17;
-  border-bottom: 1px solid #374151;
-  color: #f9fafb;
+  background: #16181D;
+  border-bottom: 1px solid #2C2F36;
+  color: #F3F4F1;
   padding: 12px 24px;
   display: flex;
   align-items: center;
@@ -42,15 +42,15 @@ html, body {
 .toolbar .actions { display: flex; gap: 10px; }
 .toolbar button {
   padding: 8px 16px;
-  border-radius: 3px;
-  border: 1px solid #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #5A5F68;
   background: transparent;
-  color: #f9fafb;
+  color: #F3F4F1;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
-.toolbar button.primary { background: #f9fafb; color: var(--ink); }
+.toolbar button.primary { background: #2346D8; border-color: #2346D8; color: #fff; }
 
 .page-wrap {
   display: flex;
@@ -144,6 +144,16 @@ table.r-items th.num, table.r-items td.num { text-align: right; }
   color: var(--ink-soft);
 }
 .r-footer .thanks { font-family: var(--serif); font-size: 12px; color: var(--ink); margin-bottom: 3px; }
+
+.r-payment { margin-top: 8px; margin-left: auto; width: 100%; max-width: 62mm; font-size: 10.5px; color: var(--ink-soft); }
+.r-payment .row { display: flex; justify-content: space-between; padding: 2px 0; }
+
+/* Z-report: same paper, content from the top (it's a report, not a receipt) */
+.receipt-page.z-page { justify-content: flex-start; height: auto; min-height: 210mm; }
+.z-section { margin-top: 12px; }
+.z-section h2 { font-family: var(--sans); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 4px; }
+.z-signoff { margin-top: 28px; display: flex; justify-content: space-between; gap: 16px; font-size: 10px; color: var(--ink-soft); }
+.z-signoff div { flex: 1; border-top: 1px solid var(--ink); padding-top: 4px; }
 
 .r-cashier {
   margin-top: 16px;

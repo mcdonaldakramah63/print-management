@@ -1,867 +1,1332 @@
+// ---------------------------------------------------------------
+// State
+// ---------------------------------------------------------------
 let currentUser = null;
 let currentSettings = null;
-let itemIdCounter = 0;
-let products = [];
-let editingProductId = null;
+let catalog = [];          // active products, for the checkout
+let cart = [];             // [{ key, product_id, name, unit_price, qty }]
+let cartKey = 0;
+let payMethod = 'cash';
+let catalogCategory = 'All';
 let currentView = null;
+let historyPage = 1;
+
+const ADMIN_VIEWS = ['products', 'print-monitor', 'reconcile', 'users', 'settings'];
+const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
+const PAY_LABELS = { cash: 'Cash', momo: 'Mobile money', card: 'Card' };
+
+const $ = (id) => document.getElementById(id);
+const isAdmin = () => currentUser && currentUser.role === 'admin';
+const cur = (n) => money(n, currentSettings.currency);
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // ---------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------
 (async function init() {
-  const meRes = await api('GET', '/api/auth/me');
-  if (!meRes.user) {
+  let me;
+  try {
+    me = await api('GET', '/api/auth/me');
+  } catch (_) {
+    me = { user: null };
+  }
+  if (!me.user) {
     window.location.href = 'login.html';
     return;
   }
-  currentUser = meRes.user;
-  document.getElementById('nav-user-name').textContent = currentUser.full_name;
-  document.getElementById('nav-user-role').textContent = currentUser.role;
+  currentUser = me.user;
+  $('nav-user-name').textContent = currentUser.full_name;
+  $('nav-user-role').textContent = currentUser.role;
+  $('nav-avatar').textContent = initials(currentUser.full_name || currentUser.username);
 
-  if (currentUser.role !== 'admin') {
-    document.querySelectorAll('.admin-only').forEach((el) => el.remove());
-  }
+  if (!isAdmin()) document.querySelectorAll('.admin-only').forEach((el) => el.remove());
 
-  const settingsRes = await api('GET', '/api/settings');
-  currentSettings = settingsRes.settings;
-  document.getElementById('brand-business').textContent = currentSettings.business_name;
-
-  await loadProductCatalog();
+  await loadSettings();
+  await loadCatalog();
 
   setupNav();
-  setupSaleForm();
+  setupSale();
   setupHistory();
-  if (currentUser.role === 'admin') {
-    setupUsers();
-    setupSettingsForm();
-    setupProductForm();
+  setupReports();
+  if (isAdmin()) {
     setupPrintMonitor();
+    setupReconcile();
+    setupProducts();
+    setupUsers();
+    setupSettings();
+    refreshUnreviewedCount();
   }
-  setupAccountForm();
+  setupAccount();
 
-  addItemRow();
   navigateTo(location.hash.replace('#', '') || 'dashboard');
-
-  // Keep the browser's back/forward buttons working between views.
   window.addEventListener('hashchange', () => {
     const view = location.hash.replace('#', '');
     if (view && view !== currentView) navigateTo(view);
   });
 })();
 
-async function loadProductCatalog() {
-  const { products: list } = await api('GET', '/api/products');
-  products = list;
-  const datalist = document.getElementById('products-datalist');
-  datalist.innerHTML = products.map((p) => `<option value="${escapeHtml(p.name)}">`).join('');
+function initials(name) {
+  return String(name).split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-document.getElementById('logout-btn').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
+async function loadSettings() {
+  const { settings } = await api('GET', '/api/settings');
+  currentSettings = settings;
+  $('brand-business').textContent = settings.business_name;
+}
+
+async function loadCatalog() {
+  const { products } = await api('GET', '/api/products');
+  catalog = products;
+}
+
+$('logout-btn').addEventListener('click', async () => {
+  try { await api('POST', '/api/auth/logout'); } catch (_) { /* leaving anyway */ }
   window.location.href = 'login.html';
 });
+
+// ---------------------------------------------------------------
+// Small UI helpers: toasts, modals, errors
+// ---------------------------------------------------------------
+function toast(message, isError) {
+  const el = document.createElement('div');
+  el.className = `toast${isError ? ' error' : ''}`;
+  el.setAttribute('role', 'status');
+  el.textContent = message;
+  let stack = document.querySelector('.toast-stack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.className = 'toast-stack';
+    document.body.appendChild(stack);
+  }
+  stack.appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+function showError(el, message) {
+  el.textContent = message;
+  el.hidden = false;
+}
+
+/**
+ * Open a modal form. `body` is trusted HTML built with escapeHtml().
+ * onSubmit(form) may throw to show an error; resolves → modal closes.
+ */
+function openModal({ title, body, submitLabel = 'Save', danger = false, wide = false, onSubmit, onOpen, onClose, hideSubmit = false }) {
+  const root = $('modal-root');
+  const previouslyFocused = document.activeElement;
+  root.innerHTML = `
+    <div class="modal-backdrop">
+      <form class="modal${wide ? ' wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modal-title" novalidate>
+        <h2 id="modal-title">${escapeHtml(title)}</h2>
+        <div class="stack">${body}</div>
+        <div class="error-text" data-modal-error hidden></div>
+        <div class="modal-foot">
+          <button type="button" class="btn btn-outline" data-modal-cancel>${hideSubmit ? 'Close' : 'Cancel'}</button>
+          ${hideSubmit ? '' : `<button type="submit" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${escapeHtml(submitLabel)}</button>`}
+        </div>
+      </form>
+    </div>`;
+  const backdrop = root.firstElementChild;
+  const form = backdrop.querySelector('form');
+  const errEl = form.querySelector('[data-modal-error]');
+
+  let closed = false;
+  const close = (submitted) => {
+    if (closed) return;
+    closed = true;
+    root.innerHTML = '';
+    if (onClose) onClose(!!submitted);
+    if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+  };
+  backdrop.addEventListener('mousedown', (e) => { if (e.target === backdrop) close(false); });
+  form.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(false); });
+  form.querySelector('[data-modal-cancel]').addEventListener('click', () => close(false));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errEl.hidden = true;
+    if (!form.reportValidity()) return;
+    const btn = form.querySelector('button[type=submit]');
+    if (btn) btn.disabled = true;
+    try {
+      if (onSubmit) await onSubmit(form);
+      close(true);
+    } catch (err) {
+      showError(errEl, err.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+  if (onOpen) onOpen(form);
+  const first = form.querySelector('.stack input:not([type=hidden]), .stack select, .stack textarea') || form.querySelector('button');
+  if (first) first.focus();
+  return form;
+}
+
+function confirmModal({ title, message, confirmLabel, danger = true }) {
+  return new Promise((resolve) => {
+    openModal({
+      title,
+      body: `<p style="margin:0;">${escapeHtml(message)}</p>`,
+      submitLabel: confirmLabel,
+      danger,
+      onClose: (submitted) => resolve(submitted)
+    });
+  });
+}
+
+function emptyState(text) {
+  return `<div class="empty-state">${escapeHtml(text)}</div>`;
+}
+
+function statusBadge(ok, yes, no) {
+  return ok ? `<span class="badge ok">${yes}</span>` : `<span class="badge danger">${no}</span>`;
+}
+
+function payBadge(method) {
+  return `<span class="badge${method === 'cash' ? '' : ' info'}">${escapeHtml(PAY_LABELS[method] || method)}</span>`;
+}
+
+function dayLabel(dateStr, opts = { weekday: 'short', day: 'numeric', month: 'short' }) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, opts);
+}
+
+function daysAgoString(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return localDateString(d);
+}
+
+// Opens a tab synchronously (inside the click handler, so it isn't popup-
+// blocked) that can be pointed at a URL once an async request finishes.
+function openPendingTab() {
+  const win = window.open('', '_blank');
+  if (win) win.document.write('<p style="font-family:sans-serif;padding:24px;color:#555">Loading&hellip;</p>');
+  return {
+    go(url) { if (win) win.location.href = url; else window.location.href = url; },
+    cancel() { if (win) win.close(); }
+  };
+}
 
 // ---------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------
 function setupNav() {
-  document.querySelectorAll('.nav-link').forEach((link) => {
+  document.querySelectorAll('.nav-link[data-view], [data-nav]').forEach((link) => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
-      navigateTo(link.dataset.view);
+      navigateTo(link.dataset.view || link.dataset.nav);
     });
   });
 }
 
 function navigateTo(view) {
-  const valid = ['dashboard', 'sale', 'history', 'products', 'print-monitor', 'users', 'settings', 'account'];
-  if (!valid.includes(view)) view = 'dashboard';
-  if (['users', 'settings', 'products', 'print-monitor'].includes(view) && currentUser.role !== 'admin') view = 'dashboard';
+  if (!VIEWS.includes(view)) view = 'dashboard';
+  if (ADMIN_VIEWS.includes(view) && !isAdmin()) view = 'dashboard';
 
-  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-  document.querySelectorAll('.nav-link').forEach((l) => l.classList.remove('active'));
-  document.getElementById(`view-${view}`).classList.add('active');
-  const link = document.querySelector(`.nav-link[data-view="${view}"]`);
-  if (link) link.classList.add('active');
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
+  document.querySelectorAll('.nav-link').forEach((l) => {
+    const on = l.dataset.view === view;
+    l.classList.toggle('active', on);
+    if (on) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
+  });
   currentView = view;
-  location.hash = view;
+  if (location.hash !== `#${view}`) location.hash = view;
+  window.scrollTo(0, 0);
 
-  if (view === 'dashboard') loadDashboard();
-  if (view === 'history') loadHistory();
-  if (view === 'users') loadUsers();
-  if (view === 'settings') fillSettingsForm();
-  if (view === 'products') loadProducts();
-  if (view === 'print-monitor') {
-    loadAgents();
-    loadPrintSummary();
-    loadPrintJobs();
-  }
+  const loaders = {
+    dashboard: loadDashboard,
+    sale: enterSale,
+    history: loadHistory,
+    reports: () => Promise.all([loadReport(), loadClose(), loadClosings()]),
+    'print-monitor': () => Promise.all([loadPrintSummary(), loadPrintJobs(), loadAgents()]),
+    reconcile: loadReconcile,
+    products: loadProducts,
+    users: loadUsers,
+    settings: fillSettingsForm
+  };
+  const load = loaders[view];
+  if (load) Promise.resolve().then(load).catch((err) => toast(err.message, true));
+}
+
+function wireGoLinks(container) {
+  container.querySelectorAll('[data-go]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); navigateTo(a.dataset.go); }));
 }
 
 // ---------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------
 async function loadDashboard() {
+  $('dash-date').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
   const data = await api('GET', '/api/dashboard/summary');
+  $('dash-closed').hidden = !data.closedToday;
 
-  document.getElementById('kpi-today-revenue').textContent = money(data.today.revenue, currentSettings.currency);
-  document.getElementById('kpi-today-count').textContent = `${data.today.count} sale${data.today.count === 1 ? '' : 's'}`;
-
-  document.getElementById('kpi-week-revenue').textContent = money(data.last7Days.revenue, currentSettings.currency);
-  document.getElementById('kpi-week-count').textContent = `${data.last7Days.count} sale${data.last7Days.count === 1 ? '' : 's'}`;
-
-  document.getElementById('kpi-month-revenue').textContent = money(data.thisMonth.revenue, currentSettings.currency);
-  document.getElementById('kpi-month-count').textContent = `${data.thisMonth.count} sale${data.thisMonth.count === 1 ? '' : 's'}`;
-
-  drawRevenueChart(data.dailySeries);
-  renderTopItems(data.topItems);
-  renderLowStock(data.lowStock);
-}
-
-function drawRevenueChart(series) {
-  const canvas = document.getElementById('revenue-chart');
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width, h = canvas.height;
-  const padding = { top: 10, right: 10, bottom: 26, left: 10 };
-  const chartW = w - padding.left - padding.right;
-  const chartH = h - padding.top - padding.bottom;
-
-  ctx.clearRect(0, 0, w, h);
-
-  const maxVal = Math.max(1, ...series.map((d) => d.revenue));
-  const barGap = 4;
-  const barWidth = chartW / series.length - barGap;
-
-  ctx.font = '10px Inter, -apple-system, sans-serif';
-  ctx.fillStyle = '#9ca3af'; // --ink-soft
-  ctx.textAlign = 'center';
-
-  series.forEach((d, i) => {
-    const barHeight = (d.revenue / maxVal) * chartH;
-    const x = padding.left + i * (barWidth + barGap);
-    const y = padding.top + (chartH - barHeight);
-
-    ctx.fillStyle = d.revenue > 0 ? '#10b981' : '#1f2937'; // --accent / --surface-2
-    ctx.fillRect(x, y, barWidth, Math.max(barHeight, 1));
-
-    // Label every other day to avoid crowding
-    if (i % 2 === 0) {
-      const label = d.day.slice(5); // MM-DD
-      ctx.fillStyle = '#9ca3af';
-      ctx.fillText(label, x + barWidth / 2, h - 8);
-    }
-  });
-}
-
-function renderTopItems(items) {
-  const wrap = document.getElementById('top-items-wrap');
-  if (items.length === 0) {
-    wrap.innerHTML = `<div class="empty-state">No sales in the last 30 days yet.</div>`;
-    return;
+  const kpis = [
+    { label: 'Today', value: cur(data.today.revenue), sub: plural(data.today.count, 'sale') },
+    { label: 'Last 7 days', value: cur(data.last7Days.revenue), sub: plural(data.last7Days.count, 'sale') },
+    { label: 'This month', value: cur(data.thisMonth.revenue), sub: plural(data.thisMonth.count, 'sale') }
+  ];
+  if (data.printing) {
+    kpis.push({ label: 'Pages printed today', value: String(data.printing.pages), sub: `${data.printing.color_pages} colour · ${data.printing.mono_pages} B&W` });
+  } else {
+    const avg = data.today.count ? data.today.revenue / data.today.count : 0;
+    kpis.push({ label: 'Average sale today', value: cur(avg), sub: 'Excludes voided sales' });
   }
-  const rows = items.map((item, i) => `
-    <tr>
-      <td>${i + 1}. ${escapeHtml(item.name)}</td>
-      <td class="num">${item.qty}</td>
-      <td class="num">${money(item.revenue, currentSettings.currency)}</td>
-    </tr>
-  `).join('');
-  wrap.innerHTML = `
-    <table>
-      <thead><tr><th>Item</th><th class="num">Qty sold</th><th class="num">Revenue</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+  $('dash-kpis').innerHTML = kpis.map(kpiCard).join('');
+
+  renderBarChart(data.dailySeries);
+
+  const mixTotal = data.paymentMix.reduce((s, m) => s + m.revenue, 0);
+  $('dash-mix').innerHTML = data.paymentMix.length === 0
+    ? '<p class="muted" style="margin:0;">No sales yet today.</p>'
+    : data.paymentMix.map((m) => meterRow(PAY_LABELS[m.method] || m.method, m.count, m.revenue, mixTotal)).join('');
+
+  const callout = $('dash-print-callout');
+  const p = data.printing;
+  if (!p) {
+    callout.innerHTML = '';
+  } else if (!p.has_print_services) {
+    callout.innerHTML = `<div class="callout info"><strong>Compare printing with sales</strong><span class="small">Mark your print products as colour or B&amp;W print services to see pages printed vs sold. <a href="#products" data-go="products">Open products</a></span></div>`;
+  } else if (p.gap > 0) {
+    callout.innerHTML = `<div class="callout"><strong>Print gap today: ${plural(p.gap, 'page')}</strong><span class="small">Agents saw ${p.color_pages + p.mono_pages} colour/B&amp;W pages; ${p.pages_sold} were sold (about ${escapeHtml(cur(p.estimated_value))} unbilled). <a href="#reconcile" data-go="reconcile">Review</a></span></div>`;
+  } else {
+    callout.innerHTML = `<div class="callout ok"><strong>Printing and sales match today</strong><span class="small">${plural(p.pages_sold, 'page')} sold for ${plural(p.color_pages + p.mono_pages, 'page')} printed.</span></div>`;
+  }
+  wireGoLinks(callout);
+
+  $('dash-top').innerHTML = data.topItems.length === 0 ? emptyState('No sales in the last 30 days yet.') : `
+    <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Revenue</th></tr></thead><tbody>
+    ${data.topItems.map((i) => `<tr><td>${escapeHtml(i.name)}</td><td class="num">${round2(i.qty)}</td><td class="num">${escapeHtml(cur(i.revenue))}</td></tr>`).join('')}
+    </tbody></table>`;
+
+  $('dash-low').innerHTML = data.lowStock.length === 0 ? '<p class="muted" style="margin:0;">All tracked stock is above its alert level.</p>'
+    : data.lowStock.map((s) => `<div class="list-row"><span>${escapeHtml(s.name)}</span><span class="badge warn">${s.stock_qty} left · alert at ${s.reorder_level}</span></div>`).join('');
 }
 
-function renderLowStock(list) {
-  const card = document.getElementById('low-stock-card');
-  const wrap = document.getElementById('low-stock-wrap');
-  if (list.length === 0) {
-    card.style.display = 'none';
-    return;
-  }
-  card.style.display = 'block';
-  wrap.innerHTML = list.map((p) => `
-    <div class="low-stock-row">
-      <span>${escapeHtml(p.name)}</span>
-      <span class="badge danger">${p.stock_qty} left (alert at ${p.reorder_level})</span>
-    </div>
-  `).join('');
+function kpiCard(k) {
+  return `<div class="card kpi"><span class="kpi-label">${escapeHtml(k.label)}</span><span class="kpi-value">${escapeHtml(String(k.value))}</span><span class="kpi-sub">${escapeHtml(k.sub)}</span></div>`;
+}
+
+function meterRow(label, count, revenue, total) {
+  return `<div class="stack" style="gap:6px;">
+    <div class="spread"><span>${escapeHtml(label)} <span class="muted small">(${count})</span></span><span class="mono">${escapeHtml(cur(revenue))}</span></div>
+    <div class="meter"><div style="width:${total ? Math.round((revenue / total) * 100) : 0}%"></div></div>
+  </div>`;
+}
+
+function renderBarChart(series) {
+  const max = Math.max(1, ...series.map((d) => d.revenue));
+  const today = localDateString();
+  $('dash-chart').innerHTML = series.map((d) => {
+    const h = Math.round((d.revenue / max) * 100);
+    const cls = d.day === today ? 'today' : d.revenue ? '' : 'zero';
+    const label = `${dayLabel(d.day)}: ${cur(d.revenue)}`;
+    return `<div class="bar-col" title="${escapeHtml(label)}"><div class="bar ${cls}" style="height:${Math.max(h, 1)}%"></div></div>`;
+  }).join('');
+  const first = series[0], mid = series[Math.floor(series.length / 2)], last = series[series.length - 1];
+  $('dash-chart-axis').innerHTML = [first, mid, last].map((d) => `<span>${escapeHtml(dayLabel(d.day, { day: 'numeric', month: 'short' }))}</span>`).join('');
 }
 
 // ---------------------------------------------------------------
-// New Sale
+// New sale (checkout)
 // ---------------------------------------------------------------
-function setupSaleForm() {
-  document.getElementById('tax-rate-display').value = `${currentSettings.tax_rate}%`;
-  document.getElementById('add-item-btn').addEventListener('click', () => addItemRow());
-  document.getElementById('discount-value').addEventListener('input', recalcTotals);
-  document.getElementById('discount-type').addEventListener('change', recalcTotals);
-  document.getElementById('sale-form').addEventListener('submit', submitSale);
-}
-
-function addItemRow() {
-  itemIdCounter += 1;
-  const id = `item-${itemIdCounter}`;
-  const wrap = document.getElementById('item-rows');
-  const row = document.createElement('div');
-  row.className = 'item-row';
-  row.id = id;
-  row.dataset.productId = '';
-  row.innerHTML = `
-    <div class="field">
-      <input class="item-name" list="products-datalist" placeholder="Item name" required>
-      <div class="stock-hint" style="display:none;"></div>
-    </div>
-    <div class="field"><input class="item-qty" type="number" min="0.01" step="0.01" value="1" placeholder="Qty" required></div>
-    <div class="field"><input class="item-price" type="number" min="0" step="0.01" placeholder="Unit price" required></div>
-    <div class="field"><input class="item-line-total" disabled value="0.00"></div>
-    <button type="button" class="remove-item" title="Remove item">&times;</button>
-  `;
-  wrap.appendChild(row);
-
-  const nameInput = row.querySelector('.item-name');
-  const priceInput = row.querySelector('.item-price');
-
-  nameInput.addEventListener('input', () => {
-    const match = products.find((p) => p.name.toLowerCase() === nameInput.value.trim().toLowerCase());
-    if (match) {
-      row.dataset.productId = match.id;
-      priceInput.value = match.price;
-    } else {
-      row.dataset.productId = '';
-    }
-    updateStockHint(row);
-    recalcTotals();
+function setupSale() {
+  $('catalog-search').addEventListener('input', renderCatalog);
+  $('catalog-search').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const q = e.target.value.trim().toLowerCase();
+    if (!q) return;
+    // Exact SKU match first (barcode scanners type the SKU then Enter), else the first result.
+    const match = catalog.find((p) => p.sku && p.sku.toLowerCase() === q) || filteredCatalog()[0];
+    if (match) { addToCart(match); e.target.value = ''; renderCatalog(); }
+  });
+  $('add-custom-btn').addEventListener('click', () => {
+    cart.push({ key: ++cartKey, product_id: null, name: '', unit_price: 0, qty: 1 });
+    renderCart();
+    const inputs = $('cart-lines').querySelectorAll('.line-name');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  });
+  $('clear-cart-btn').addEventListener('click', () => { cart = []; renderCart(); });
+  $('discount-value').addEventListener('input', renderTotals);
+  $('discount-type').addEventListener('change', renderTotals);
+  $('amount-tendered').addEventListener('input', renderTotals);
+  $('pay-methods').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-pay]');
+    if (!btn) return;
+    payMethod = btn.dataset.pay;
+    $('pay-methods').querySelectorAll('[data-pay]').forEach((b) => {
+      b.classList.toggle('active', b === btn);
+      b.setAttribute('aria-pressed', String(b === btn));
+    });
+    $('cash-fields').hidden = payMethod !== 'cash';
+    renderTotals();
   });
 
-  row.querySelector('.item-qty').addEventListener('input', () => { updateStockHint(row); recalcTotals(); });
-  priceInput.addEventListener('input', recalcTotals);
-  row.querySelector('.remove-item').addEventListener('click', () => {
-    row.remove();
-    recalcTotals();
+  // Cart line edits (delegated, since lines are re-rendered)
+  const lines = $('cart-lines');
+  lines.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const line = cart.find((l) => l.key === Number(btn.dataset.key));
+    if (!line) return;
+    if (btn.dataset.act === 'inc') line.qty = round2(line.qty + 1);
+    if (btn.dataset.act === 'dec') line.qty = round2(line.qty - 1);
+    if (btn.dataset.act === 'remove' || line.qty <= 0) cart = cart.filter((l) => l !== line);
+    renderCart();
   });
-  recalcTotals();
-}
-
-function updateStockHint(row) {
-  const hint = row.querySelector('.stock-hint');
-  const productId = row.dataset.productId;
-  if (!productId) { hint.style.display = 'none'; return; }
-
-  const product = products.find((p) => String(p.id) === String(productId));
-  if (!product || !product.track_stock) { hint.style.display = 'none'; return; }
-
-  const qty = parseFloat(row.querySelector('.item-qty').value) || 0;
-  const short = qty > product.stock_qty;
-  hint.style.display = 'block';
-  hint.className = `stock-hint${short ? ' warn' : ''}`;
-  hint.textContent = short
-    ? `Only ${product.stock_qty} in stock`
-    : `${product.stock_qty} in stock`;
-}
-
-function getSaleItems() {
-  return Array.from(document.querySelectorAll('.item-row')).map((row) => {
-    const name = row.querySelector('.item-name').value.trim();
-    const qty = parseFloat(row.querySelector('.item-qty').value) || 0;
-    const unit_price = parseFloat(row.querySelector('.item-price').value) || 0;
-    const product_id = row.dataset.productId || null;
-    return { name, qty, unit_price, product_id, row };
-  });
-}
-
-function recalcTotals() {
-  const items = getSaleItems();
-  let subtotal = 0;
-  items.forEach((item) => {
-    // Round each line the same way the server does, so the preview matches the receipt.
-    const lineTotal = Math.round(item.qty * item.unit_price * 100) / 100;
-    subtotal += lineTotal;
-    item.row.querySelector('.item-line-total').value = lineTotal.toFixed(2);
+  lines.addEventListener('input', (e) => {
+    const input = e.target;
+    const line = cart.find((l) => l.key === Number(input.dataset.key));
+    if (!line) return;
+    if (input.dataset.field === 'name') line.name = input.value;
+    if (input.dataset.field === 'qty') line.qty = parseFloat(input.value) || 0;
+    if (input.dataset.field === 'price') line.unit_price = parseFloat(input.value) || 0;
+    // Update only the numbers, not the inputs, so typing isn't interrupted.
+    const totalEl = lines.querySelector(`[data-line-total="${line.key}"]`);
+    if (totalEl) totalEl.textContent = money(round2(line.qty * line.unit_price), '');
+    updateStockWarnings();
+    renderTotals();
   });
 
-  const discountType = document.getElementById('discount-type').value;
-  const discountValue = parseFloat(document.getElementById('discount-value').value) || 0;
-  let discountAmount = discountType === 'percent' ? (subtotal * discountValue) / 100 : discountValue;
-  discountAmount = Math.max(0, Math.min(discountAmount, subtotal));
-
-  const taxable = subtotal - discountAmount;
-  const taxAmount = (taxable * currentSettings.tax_rate) / 100;
-  const total = taxable + taxAmount;
-
-  document.getElementById('calc-subtotal').textContent = subtotal.toFixed(2);
-  document.getElementById('calc-discount').textContent = discountAmount.toFixed(2);
-  document.getElementById('calc-tax').textContent = taxAmount.toFixed(2);
-  document.getElementById('calc-total').textContent = total.toFixed(2);
+  $('complete-sale-btn').addEventListener('click', completeSale);
 }
 
-async function submitSale(e) {
-  e.preventDefault();
-  const errorEl = document.getElementById('sale-error');
-  errorEl.style.display = 'none';
+async function enterSale() {
+  $('calc-tax-label').textContent = `Tax (${currentSettings.tax_rate}%)`;
+  renderCatalog();
+  renderCart();
+  $('catalog-search').focus();
+  try {
+    const { closing } = await api('GET', '/api/reports/close');
+    $('sale-closed').hidden = !closing;
+    $('complete-sale-btn').disabled = !!closing;
+  } catch (_) { /* non-fatal: the server still refuses sales on a closed day */ }
+}
 
-  const items = getSaleItems().map(({ name, qty, unit_price, product_id }) => ({ name, qty, unit_price, product_id }));
-  if (items.length === 0 || items.some((i) => !i.name)) {
-    errorEl.textContent = 'Add at least one item with a name.';
-    errorEl.style.display = 'block';
+function filteredCatalog() {
+  const q = $('catalog-search').value.trim().toLowerCase();
+  return catalog.filter((p) => (catalogCategory === 'All' || (p.category || 'Other') === catalogCategory) &&
+    (!q || p.name.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q)));
+}
+
+function renderCatalog() {
+  const cats = ['All', ...Array.from(new Set(catalog.map((p) => p.category || 'Other'))).sort()];
+  if (!cats.includes(catalogCategory)) catalogCategory = 'All';
+  const catsEl = $('catalog-cats');
+  catsEl.innerHTML = cats.length > 2 ? cats.map((c) => `<button type="button" class="chip${c === catalogCategory ? ' active' : ''}" aria-pressed="${c === catalogCategory}" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('') : '';
+  catsEl.querySelectorAll('[data-cat]').forEach((b) => b.addEventListener('click', () => { catalogCategory = b.dataset.cat; renderCatalog(); }));
+
+  const list = filteredCatalog();
+  const tiles = $('catalog-tiles');
+  if (catalog.length === 0) {
+    tiles.innerHTML = emptyState(isAdmin() ? 'No products yet. Add them under Products, or use "+ Custom item".' : 'No products yet. Use "+ Custom item".');
     return;
+  }
+  tiles.innerHTML = list.length === 0 ? emptyState('No products match.') : list.map((p) => {
+    const low = p.track_stock && p.stock_qty <= p.reorder_level;
+    const stock = p.track_stock ? `${p.stock_qty} in stock` : (p.print_color_mode ? (p.print_color_mode === 'color' ? 'Colour print' : 'B&W print') : 'Service');
+    return `<button type="button" class="tile" data-id="${p.id}">
+      <span class="t-name">${escapeHtml(p.name)}</span>
+      <span class="t-meta"><span class="t-price">${escapeHtml(cur(p.price))}</span><span class="t-stock${low ? ' low' : ''}">${escapeHtml(stock)}</span></span>
+    </button>`;
+  }).join('');
+  tiles.querySelectorAll('.tile').forEach((t) => t.addEventListener('click', () => {
+    addToCart(catalog.find((p) => p.id === Number(t.dataset.id)));
+  }));
+}
+
+function addToCart(product) {
+  if (!product) return;
+  const line = cart.find((l) => l.product_id === product.id && l.unit_price === product.price);
+  if (line) line.qty = round2(line.qty + 1);
+  else cart.push({ key: ++cartKey, product_id: product.id, name: product.name, unit_price: product.price, qty: 1 });
+  renderCart();
+}
+
+function renderCart() {
+  const wrap = $('cart-lines');
+  if (cart.length === 0) {
+    wrap.innerHTML = '<p class="muted" style="text-align:center; margin:0; padding:24px 0;">Tap a product to add it.</p>';
+  } else {
+    wrap.innerHTML = cart.map((l) => `
+      <div class="cart-line">
+        <div style="min-width:0;">
+          ${l.product_id
+            ? `<div style="font-weight:500;">${escapeHtml(l.name)}</div>`
+            : `<label class="sr-only" for="ln-${l.key}">Item name</label><input class="line-name" id="ln-${l.key}" data-key="${l.key}" data-field="name" value="${escapeHtml(l.name)}" placeholder="Item name">`}
+          <div class="line-unit"><label class="sr-only" for="lp-${l.key}">Unit price</label><input id="lp-${l.key}" type="number" min="0" step="0.01" data-key="${l.key}" data-field="price" value="${l.unit_price}"> each</div>
+          <div class="stock-warn" data-stock-warn="${l.key}" hidden></div>
+        </div>
+        <div class="qty">
+          <button type="button" data-act="dec" data-key="${l.key}" aria-label="Decrease quantity">&minus;</button>
+          <label class="sr-only" for="lq-${l.key}">Quantity</label>
+          <input id="lq-${l.key}" type="number" min="0.01" step="any" data-key="${l.key}" data-field="qty" value="${l.qty}">
+          <button type="button" data-act="inc" data-key="${l.key}" aria-label="Increase quantity">+</button>
+        </div>
+        <span class="line-total" data-line-total="${l.key}">${money(round2(l.qty * l.unit_price), '')}</span>
+        <button type="button" class="line-remove" data-act="remove" data-key="${l.key}" aria-label="Remove ${escapeHtml(l.name || 'item')}">&times;</button>
+      </div>`).join('');
+  }
+  updateStockWarnings();
+  renderTotals();
+}
+
+function updateStockWarnings() {
+  for (const l of cart) {
+    const el = document.querySelector(`[data-stock-warn="${l.key}"]`);
+    if (!el) continue;
+    const p = l.product_id && catalog.find((x) => x.id === l.product_id);
+    const qtyInCart = cart.filter((x) => x.product_id === l.product_id).reduce((s, x) => s + x.qty, 0);
+    const short = p && p.track_stock && qtyInCart > p.stock_qty;
+    el.hidden = !short;
+    if (short) el.textContent = `Only ${p.stock_qty} in stock`;
+  }
+}
+
+function computeTotals() {
+  const subtotal = round2(cart.reduce((s, l) => s + round2(l.qty * l.unit_price), 0));
+  const dType = $('discount-type').value;
+  const dValue = Math.max(0, parseFloat($('discount-value').value) || 0);
+  let discount = dType === 'percent' ? (subtotal * dValue) / 100 : dValue;
+  discount = round2(Math.max(0, Math.min(discount, subtotal)));
+  const tax = round2(((subtotal - discount) * currentSettings.tax_rate) / 100);
+  const total = round2(subtotal - discount + tax);
+  return { subtotal, discount, tax, total };
+}
+
+function renderTotals() {
+  const t = computeTotals();
+  $('calc-subtotal').textContent = cur(t.subtotal);
+  $('calc-discount').textContent = `− ${cur(t.discount)}`;
+  $('calc-tax').textContent = cur(t.tax);
+  $('calc-total').textContent = cur(t.total);
+
+  const tenderedRaw = $('amount-tendered').value;
+  const box = $('change-box');
+  if (tenderedRaw === '') {
+    box.classList.remove('short');
+    box.firstElementChild.textContent = 'Change due';
+    $('change-due').textContent = cur(0);
+  } else {
+    const diff = round2((parseFloat(tenderedRaw) || 0) - t.total);
+    box.classList.toggle('short', diff < 0);
+    box.firstElementChild.textContent = diff < 0 ? 'Short by' : 'Change due';
+    $('change-due').textContent = cur(Math.abs(diff));
+  }
+}
+
+function resetSale() {
+  cart = [];
+  $('customer-name').value = '';
+  $('customer-phone').value = '';
+  $('discount-value').value = 0;
+  $('discount-type').value = 'amount';
+  $('amount-tendered').value = '';
+  $('sale-error').hidden = true;
+  renderCart();
+}
+
+async function completeSale() {
+  const errEl = $('sale-error');
+  errEl.hidden = true;
+
+  if (cart.length === 0) return showError(errEl, 'Add at least one item.');
+  const bad = cart.find((l) => !l.name.trim() || !(l.qty > 0) || !(l.unit_price >= 0));
+  if (bad) return showError(errEl, 'Every item needs a name, a quantity above 0 and a price.');
+
+  const totals = computeTotals();
+  const tenderedRaw = $('amount-tendered').value;
+  if (payMethod === 'cash' && tenderedRaw !== '' && (parseFloat(tenderedRaw) || 0) < totals.total) {
+    return showError(errEl, 'Amount tendered is less than the total.');
   }
 
   const payload = {
-    customer_name: document.getElementById('customer-name').value.trim(),
-    items,
-    discount_type: document.getElementById('discount-type').value,
-    discount_value: parseFloat(document.getElementById('discount-value').value) || 0
+    customer_name: $('customer-name').value.trim(),
+    customer_phone: $('customer-phone').value.trim(),
+    items: cart.map((l) => ({ name: l.name.trim(), qty: l.qty, unit_price: l.unit_price, product_id: l.product_id })),
+    discount_type: $('discount-type').value,
+    discount_value: parseFloat($('discount-value').value) || 0,
+    payment_method: payMethod,
+    amount_tendered: payMethod === 'cash' && tenderedRaw !== '' ? parseFloat(tenderedRaw) : null
   };
 
-  // Open the receipt tab now, while we're still inside the click/submit
-  // handler: browsers block window.open() calls made after an await as
-  // unsolicited pop-ups.
-  const receiptWin = window.open('', '_blank');
-
+  const btn = $('complete-sale-btn');
+  btn.disabled = true;
+  const tab = openPendingTab();
   try {
     const result = await api('POST', '/api/sales', payload);
-    resetSaleForm();
-    const receiptUrl = `receipt.html?id=${result.id}`;
-    if (receiptWin) receiptWin.location.href = receiptUrl;
-    else window.location.href = receiptUrl;
-    await loadProductCatalog(); // stock levels changed
+    tab.go(`receipt.html?id=${result.id}`);
+    resetSale();
+    toast(result.change_due != null
+      ? `Sale ${result.receipt_no} recorded. Change due: ${cur(result.change_due)}`
+      : `Sale ${result.receipt_no} recorded.`);
+    await loadCatalog();
+    renderCatalog();
   } catch (err) {
-    if (receiptWin) receiptWin.close();
-    errorEl.textContent = err.message;
-    errorEl.style.display = 'block';
+    tab.cancel();
+    showError(errEl, err.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 
-function resetSaleForm() {
-  document.getElementById('customer-name').value = '';
-  document.getElementById('discount-value').value = 0;
-  document.getElementById('discount-type').value = 'amount';
-  document.getElementById('item-rows').innerHTML = '';
-  addItemRow();
-  recalcTotals();
+// ---------------------------------------------------------------
+// Sales history
+// ---------------------------------------------------------------
+function historyParams() {
+  const params = new URLSearchParams();
+  const map = { from: 'filter-from', to: 'filter-to', payment_method: 'filter-pay', status: 'filter-status', q: 'filter-q' };
+  for (const [key, id] of Object.entries(map)) {
+    const v = $(id).value.trim();
+    if (v) params.set(key, v);
+  }
+  return params;
 }
 
-// ---------------------------------------------------------------
-// History
-// ---------------------------------------------------------------
 function setupHistory() {
-  document.getElementById('filter-btn').addEventListener('click', loadHistory);
+  $('history-filters').addEventListener('submit', (e) => { e.preventDefault(); historyPage = 1; loadHistory().catch((err) => toast(err.message, true)); });
+  $('history-pages').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-page]');
+    if (b) { historyPage = Number(b.dataset.page); loadHistory().catch((err) => toast(err.message, true)); }
+  });
+  $('history-table-wrap').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-void]');
+    if (!btn) return;
+    const ok = await confirmModal({
+      title: `Void ${btn.dataset.receipt}?`,
+      message: 'It stays in history marked as voided, is excluded from totals, and any tracked stock goes back on the shelf.',
+      confirmLabel: 'Void sale'
+    });
+    if (!ok) return;
+    try {
+      await api('PATCH', `/api/sales/${btn.dataset.void}/void`);
+      toast(`${btn.dataset.receipt} voided.`);
+      await loadCatalog();
+      await loadHistory();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 }
 
 async function loadHistory() {
-  const from = document.getElementById('filter-from').value;
-  const to = document.getElementById('filter-to').value;
-  const q = document.getElementById('filter-q').value.trim();
+  const params = historyParams();
+  $('history-export').href = `/api/sales/export.csv?${params.toString()}`;
+  params.set('page', historyPage);
+  params.set('limit', 25);
+  const data = await api('GET', `/api/sales?${params.toString()}`);
 
-  const params = new URLSearchParams();
-  if (from) params.set('from', from);
-  if (to) params.set('to', to);
-  if (q) params.set('q', q);
-
-  const { sales } = await api('GET', `/api/sales?${params.toString()}`);
-  const wrap = document.getElementById('history-table-wrap');
-
-  if (sales.length === 0) {
-    wrap.innerHTML = `<div class="empty-state">No sales found for this filter.</div>`;
+  $('history-summary').textContent = `${plural(data.total, 'sale')} · ${cur(data.summary.revenue)} excluding voided${data.summary.voided ? ` · ${data.summary.voided} voided` : ''}`;
+  const wrap = $('history-table-wrap');
+  if (data.sales.length === 0) {
+    wrap.innerHTML = emptyState('No sales found for this filter.');
+    $('history-pages').innerHTML = '';
     return;
   }
-
-  const rows = sales.map((s) => `
-    <tr>
-      <td>${escapeHtml(s.receipt_no)}</td>
-      <td>${formatDbDate(s.created_at)}</td>
-      <td>${s.customer_name ? escapeHtml(s.customer_name) : '&mdash;'}</td>
-      <td>${escapeHtml(s.cashier_name)}</td>
-      <td class="num">${money(s.total, currentSettings.currency)}</td>
-      <td>${s.voided ? '<span class="badge danger">Voided</span>' : '<span class="badge">Completed</span>'}</td>
-      <td>
-        <a href="receipt.html?id=${s.id}" target="_blank" class="btn btn-outline btn-sm">View / Print</a>
-        ${currentUser.role === 'admin' && !s.voided ? `<button class="btn btn-outline btn-sm void-btn" data-id="${s.id}">Void</button>` : ''}
-      </td>
-    </tr>
-  `).join('');
-
   wrap.innerHTML = `
     <table>
-      <thead><tr><th>Receipt #</th><th>Date</th><th>Customer</th><th>Cashier</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+      <thead><tr><th>Receipt</th><th>Date</th><th>Customer</th><th>Cashier</th><th>Payment</th><th class="num">Total</th><th>Status</th><th></th></tr></thead>
+      <tbody>${data.sales.map((s) => `
+        <tr class="${s.voided ? 'voided' : ''}">
+          <td class="mono">${escapeHtml(s.receipt_no)}</td>
+          <td>${escapeHtml(formatDbDate(s.created_at))}</td>
+          <td>${s.customer_name ? escapeHtml(s.customer_name) : '<span class="muted">Walk-in</span>'}${s.customer_phone ? `<div class="muted small">${escapeHtml(s.customer_phone)}</div>` : ''}</td>
+          <td>${escapeHtml(s.cashier_name)}</td>
+          <td>${payBadge(s.payment_method)}</td>
+          <td class="num">${escapeHtml(cur(s.total))}</td>
+          <td>${s.voided ? '<span class="badge danger">Voided</span>' : '<span class="badge ok">Completed</span>'}</td>
+          <td><div class="actions">
+            <a class="btn btn-outline btn-sm" href="receipt.html?id=${s.id}" target="_blank" rel="noopener">Receipt</a>
+            ${isAdmin() && !s.voided ? `<button type="button" class="btn btn-danger btn-sm" data-void="${s.id}" data-receipt="${escapeHtml(s.receipt_no)}">Void</button>` : ''}
+          </div></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
 
-  wrap.querySelectorAll('.void-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Void this sale? It will stay in history but be marked as voided.')) return;
-      try {
-        await api('PATCH', `/api/sales/${btn.dataset.id}/void`);
-      } catch (err) {
-        alert(err.message);
+  $('history-pages').innerHTML = data.pages <= 1 ? '' : `
+    <span class="info">Page ${data.page} of ${data.pages}</span>
+    <button type="button" class="btn btn-outline btn-sm" data-page="${data.page - 1}" ${data.page <= 1 ? 'disabled' : ''}>Previous</button>
+    <button type="button" class="btn btn-outline btn-sm" data-page="${data.page + 1}" ${data.page >= data.pages ? 'disabled' : ''}>Next</button>`;
+}
+
+// ---------------------------------------------------------------
+// Reports & end-of-day close
+// ---------------------------------------------------------------
+function setupReports() {
+  const today = localDateString();
+  $('report-from').value = `${today.slice(0, 8)}01`;
+  $('report-to').value = today;
+  $('close-date').value = today;
+  $('close-date').max = today;
+
+  $('report-filters').addEventListener('submit', (e) => { e.preventDefault(); loadReport().catch((err) => toast(err.message, true)); });
+  $('close-date').addEventListener('change', () => loadClose().catch((err) => toast(err.message, true)));
+  $('cash-counted').addEventListener('input', renderVariance);
+  $('close-day-btn').addEventListener('click', closeDay);
+  $('closings-wrap').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-close-date]');
+    if (!b) return;
+    $('close-date').value = b.dataset.closeDate;
+    loadClose().catch((err) => toast(err.message, true));
+    $('close-card').scrollIntoView({ behavior: 'smooth' });
+  });
+}
+
+async function loadReport() {
+  const from = $('report-from').value;
+  const to = $('report-to').value;
+  const q = new URLSearchParams({ from, to }).toString();
+  $('report-export').href = `/api/reports/export.csv?${q}`;
+  const data = await api('GET', `/api/reports/summary?${q}`);
+  const t = data.totals;
+
+  $('report-kpis').innerHTML = [
+    { label: 'Revenue', value: cur(t.revenue), sub: `${dayLabel(data.from, { day: 'numeric', month: 'short' })} – ${dayLabel(data.to, { day: 'numeric', month: 'short', year: 'numeric' })}` },
+    { label: 'Sales', value: t.count, sub: t.voided_count ? `${t.voided_count} voided (${cur(t.voided_value)})` : 'None voided' },
+    { label: 'Average sale', value: cur(t.average), sub: 'Excludes voided sales' },
+    { label: 'Discounts given', value: cur(t.discounts), sub: `Tax collected ${cur(t.tax)}` }
+  ].map(kpiCard).join('');
+
+  $('report-items').innerHTML = data.byItem.length === 0 ? emptyState('No sales in this range.') : `
+    <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Revenue</th></tr></thead><tbody>
+    ${data.byItem.map((i) => `<tr><td>${escapeHtml(i.name)}</td><td class="num">${round2(i.qty)}</td><td class="num">${escapeHtml(cur(i.revenue))}</td></tr>`).join('')}
+    </tbody></table>`;
+
+  $('report-cashiers').innerHTML = data.byCashier.length === 0 ? '<p class="muted" style="margin:0;">No sales in this range.</p>'
+    : data.byCashier.map((c) => `<div class="list-row"><span>${escapeHtml(c.name)} <span class="muted small">${plural(c.count, 'sale')}</span></span><span class="mono">${escapeHtml(cur(c.revenue))}</span></div>`).join('');
+
+  const payTotal = data.byPayment.reduce((s, p) => s + p.revenue, 0);
+  $('report-payments').innerHTML = data.byPayment.length === 0 ? '<p class="muted" style="margin:0;">No sales in this range.</p>'
+    : `<div class="stack">${data.byPayment.map((p) => meterRow(PAY_LABELS[p.method] || p.method, p.count, p.revenue, payTotal)).join('')}</div>`;
+}
+
+let closeState = null;
+
+async function loadClose() {
+  const date = $('close-date').value || localDateString();
+  const data = await api('GET', `/api/reports/close?date=${encodeURIComponent(date)}`);
+  closeState = data;
+  $('h-close').textContent = dayLabel(data.date, { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const f = data.closing || data.figures;
+  $('close-lines').innerHTML = `
+    <div class="t-row"><span>Sales (${f.sales_count})</span><span>${escapeHtml(cur(f.gross_total))}</span></div>
+    <div class="t-row"><span>Mobile money</span><span>${escapeHtml(cur(f.momo_total))}</span></div>
+    <div class="t-row"><span>Card</span><span>${escapeHtml(cur(f.card_total))}</span></div>
+    ${f.voided_count ? `<div class="t-row"><span>Voided sales</span><span>${f.voided_count}</span></div>` : ''}
+    <div class="t-row t-total"><span>Cash expected</span><span>${escapeHtml(cur(f.cash_total))}</span></div>`;
+
+  const closed = !!data.closing;
+  $('close-form-wrap').hidden = closed;
+  $('closed-info').hidden = !closed;
+  $('close-error').hidden = true;
+  if (closed) {
+    const c = data.closing;
+    $('closed-info').innerHTML = `
+      <div class="z-lines"><div class="t-row"><span>Cash counted</span><span>${escapeHtml(cur(c.cash_counted))}</span></div></div>
+      ${varianceHtml(c.variance)}
+      <p class="small" style="margin:0; color:var(--side-text);">Closed by ${escapeHtml(c.closed_by_name)} · ${escapeHtml(formatDbDate(c.closed_at))}${c.note ? `<br>Note: ${escapeHtml(c.note)}` : ''}</p>
+      <a class="btn btn-light btn-block" href="zreport.html?date=${encodeURIComponent(c.business_date)}" target="_blank" rel="noopener">Print Z-report</a>
+      ${isAdmin() ? '<button type="button" class="btn btn-block" id="reopen-day-btn" style="background:transparent; color:#fff; border-color:var(--side-line);">Reopen this day</button>' : ''}`;
+    const reopen = $('reopen-day-btn');
+    if (reopen) reopen.addEventListener('click', reopenDay);
+  } else {
+    $('cash-counted').value = '';
+    $('close-note').value = '';
+    renderVariance();
+  }
+}
+
+function varianceHtml(v) {
+  const cls = v < 0 ? 'short' : v > 0 ? 'over' : 'even';
+  const label = v < 0 ? 'Short by' : v > 0 ? 'Over by' : 'Drawer balances';
+  return `<div class="variance ${cls}"><span>${label}</span><span>${v ? escapeHtml(cur(Math.abs(v))) : ''}</span></div>`;
+}
+
+function renderVariance() {
+  const raw = $('cash-counted').value;
+  if (raw === '' || !closeState) { $('close-variance').innerHTML = ''; return; }
+  $('close-variance').innerHTML = varianceHtml(round2((parseFloat(raw) || 0) - closeState.figures.cash_total));
+}
+
+async function closeDay() {
+  const errEl = $('close-error');
+  errEl.hidden = true;
+  const raw = $('cash-counted').value;
+  if (raw === '') return showError(errEl, 'Enter the cash counted in the drawer.');
+  const date = $('close-date').value || localDateString();
+  const tab = openPendingTab();
+  try {
+    await api('POST', '/api/reports/close', { date, cash_counted: parseFloat(raw), note: $('close-note').value.trim() });
+    tab.go(`zreport.html?date=${encodeURIComponent(date)}`);
+    toast(`${dayLabel(date)} closed.`);
+    await Promise.all([loadClose(), loadClosings()]);
+  } catch (err) {
+    tab.cancel();
+    showError(errEl, err.message);
+  }
+}
+
+async function reopenDay() {
+  const date = closeState.date;
+  const ok = await confirmModal({
+    title: `Reopen ${dayLabel(date)}?`,
+    message: 'The Z-report for this day is discarded so late sales or voids can be recorded. Close the day again afterwards.',
+    confirmLabel: 'Reopen day'
+  });
+  if (!ok) return;
+  try {
+    await api('DELETE', `/api/reports/close/${encodeURIComponent(date)}`);
+    toast(`${dayLabel(date)} reopened.`);
+    await Promise.all([loadClose(), loadClosings()]);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function loadClosings() {
+  const { closings } = await api('GET', '/api/reports/closings');
+  $('closings-wrap').innerHTML = closings.length === 0 ? '<p class="muted" style="margin:0;">No days closed yet.</p>' : `
+    <table><thead><tr><th>Day</th><th class="num">Sales</th><th class="num">Gross</th><th class="num">Cash expected</th><th class="num">Counted</th><th class="num">Variance</th><th>Closed by</th><th></th></tr></thead><tbody>
+    ${closings.map((c) => `<tr>
+      <td>${escapeHtml(dayLabel(c.business_date))}</td>
+      <td class="num">${c.sales_count}</td>
+      <td class="num">${escapeHtml(cur(c.gross_total))}</td>
+      <td class="num">${escapeHtml(cur(c.cash_total))}</td>
+      <td class="num">${escapeHtml(cur(c.cash_counted))}</td>
+      <td class="num"><span class="badge ${c.variance < 0 ? 'warn' : c.variance > 0 ? 'info' : 'ok'}">${c.variance > 0 ? '+' : ''}${money(c.variance, '')}</span></td>
+      <td>${escapeHtml(c.closed_by_name)}</td>
+      <td><div class="actions"><button type="button" class="btn btn-ghost btn-sm" data-close-date="${escapeHtml(c.business_date)}">View</button><a class="btn btn-outline btn-sm" href="zreport.html?date=${encodeURIComponent(c.business_date)}" target="_blank" rel="noopener">Z-report</a></div></td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+// ---------------------------------------------------------------
+// Print monitor (admin)
+// ---------------------------------------------------------------
+function setupPrintMonitor() {
+  $('summary-date').value = localDateString();
+  const reload = () => Promise.all([loadPrintSummary(), loadPrintJobs()]).catch((err) => toast(err.message, true));
+  $('summary-date').addEventListener('change', reload);
+  $('pj-status').addEventListener('change', () => loadPrintJobs().catch((err) => toast(err.message, true)));
+  $('pj-bulk-review').addEventListener('click', () => bulkUpdatePrintJobs('review'));
+  $('pj-bulk-flag').addEventListener('click', () => bulkUpdatePrintJobs('flag'));
+  $('print-jobs-table-wrap').addEventListener('change', (e) => {
+    if (e.target.id === 'pj-check-all') {
+      document.querySelectorAll('.pj-check').forEach((cb) => { cb.checked = e.target.checked; });
+    }
+    updateBulkButtons();
+  });
+  $('agent-register-btn').addEventListener('click', () => {
+    openModal({
+      title: 'Register a print agent',
+      body: `<div class="field"><label for="agent-label">Name for this PC</label><input id="agent-label" required maxlength="100" placeholder="e.g. Front desk PC"></div>`,
+      submitLabel: 'Register',
+      onSubmit: async (form) => {
+        const result = await api('POST', '/api/agents', { label: form.querySelector('#agent-label').value.trim() });
+        const reveal = $('agent-key-reveal');
+        reveal.hidden = false;
+        reveal.innerHTML = `
+          <div class="callout info">
+            <strong>Agent "${escapeHtml(result.label)}" registered</strong>
+            <span class="small">Copy this key into the agent's <code>config.json</code> now. It will not be shown again.</span>
+            <code class="key-box">${escapeHtml(result.api_key)}</code>
+          </div>`;
+        await loadAgents();
       }
-      await loadProductCatalog(); // voiding returns stock
-      loadHistory();
     });
+  });
+  $('agents-wrap').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-agent]');
+    if (!b) return;
+    try {
+      await api('PATCH', `/api/agents/${b.dataset.agent}/active`, { active: b.dataset.active !== '1' });
+      await loadAgents();
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+async function refreshUnreviewedCount() {
+  try {
+    const { jobs } = await api('GET', '/api/print-jobs?status=draft');
+    const el = $('unreviewed-count');
+    el.hidden = jobs.length === 0;
+    el.textContent = jobs.length >= 500 ? '500+' : String(jobs.length);
+    el.title = `${jobs.length} unreviewed print jobs`;
+  } catch (_) { /* badge is optional */ }
+}
+
+async function loadPrintSummary() {
+  const date = $('summary-date').value || localDateString();
+  const { totals, byPrinter } = await api('GET', `/api/print-jobs/summary?date=${encodeURIComponent(date)}`);
+  $('summary-kpis').innerHTML = [
+    { label: 'Jobs printed', value: totals.job_count, sub: `${totals.total_pages} pages total` },
+    { label: 'Colour pages', value: totals.color_pages, sub: plural(totals.color_jobs, 'job') },
+    { label: 'B&W pages', value: totals.mono_pages, sub: `${plural(totals.mono_jobs, 'job')}${totals.unknown_color_jobs ? ` · ${totals.unknown_color_jobs} undetected` : ''}` },
+    { label: 'Duplex / single', value: `${totals.duplex_jobs} / ${totals.simplex_jobs}`, sub: 'Best-effort, see agent docs' }
+  ].map(kpiCard).join('');
+
+  $('summary-by-printer').innerHTML = byPrinter.length === 0 ? '<p class="muted" style="margin:0;">Nothing printed this day.</p>' : `
+    <table><thead><tr><th>Printer</th><th class="num">Jobs</th><th class="num">Pages</th></tr></thead><tbody>
+    ${byPrinter.map((p) => `<tr><td>${escapeHtml(p.printer_name)}</td><td class="num">${p.job_count}</td><td class="num">${p.total_pages}</td></tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function loadPrintJobs() {
+  const date = $('summary-date').value || localDateString();
+  const params = new URLSearchParams({ from: date, to: date });
+  const status = $('pj-status').value;
+  if (status) params.set('status', status);
+  const { jobs } = await api('GET', `/api/print-jobs?${params.toString()}`);
+  const wrap = $('print-jobs-table-wrap');
+
+  if (jobs.length === 0) {
+    wrap.innerHTML = emptyState('No print jobs for this day and filter.');
+    updateBulkButtons();
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th><label class="sr-only" for="pj-check-all">Select all</label><input type="checkbox" id="pj-check-all"></th><th>Document</th><th>Printer</th><th>User</th><th class="num">Pages</th><th>Type</th><th>Time</th><th>Status</th></tr></thead>
+      <tbody>${jobs.map((j) => `
+        <tr>
+          <td><input type="checkbox" class="pj-check" data-id="${j.id}" aria-label="Select ${escapeHtml(j.document_name || 'job')}"></td>
+          <td>${j.document_name ? escapeHtml(j.document_name) : '<span class="muted">(untitled)</span>'}</td>
+          <td>${escapeHtml(j.printer_name)}<div class="muted small">${escapeHtml(j.agent_label)}</div></td>
+          <td>${j.submitted_by ? escapeHtml(j.submitted_by) : '<span class="muted">&mdash;</span>'}</td>
+          <td class="num">${j.pages != null ? j.pages : '<span class="muted">?</span>'}</td>
+          <td><div class="row" style="gap:4px;">${colorBadge(j.color_mode)}${duplexBadge(j.duplex)}</div></td>
+          <td>${escapeHtml(new Date(j.submitted_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))}</td>
+          <td>${jobStatus(j)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  updateBulkButtons();
+}
+
+function colorBadge(mode) {
+  if (mode === 'color') return '<span class="badge info">Colour</span>';
+  if (mode === 'mono') return '<span class="badge">B&amp;W</span>';
+  return '<span class="badge warn">Mode unknown</span>';
+}
+
+function duplexBadge(duplex) {
+  if (duplex === 'duplex') return '<span class="badge">Duplex</span>';
+  if (duplex === 'simplex') return '<span class="badge">Single-sided</span>';
+  return '';
+}
+
+function jobStatus(j) {
+  if (j.status === 'approved') return '<span class="badge ok">Reviewed</span>';
+  if (j.status === 'rejected') return `<span class="badge danger">Flagged</span>${j.note ? `<div class="muted small">${escapeHtml(j.note)}</div>` : ''}`;
+  return '<span class="badge warn">Unreviewed</span>';
+}
+
+function updateBulkButtons() {
+  const n = document.querySelectorAll('.pj-check:checked').length;
+  $('pj-bulk-review').disabled = n === 0;
+  $('pj-bulk-flag').disabled = n === 0;
+}
+
+async function bulkUpdatePrintJobs(action) {
+  const ids = Array.from(document.querySelectorAll('.pj-check:checked')).map((cb) => Number(cb.dataset.id));
+  if (ids.length === 0) return;
+  const done = () => Promise.all([loadPrintJobs(), refreshUnreviewedCount()]);
+  if (action === 'review') {
+    try {
+      await api('PATCH', '/api/print-jobs/bulk-review', { ids });
+      await done();
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+  openModal({
+    title: `Flag ${plural(ids.length, 'job')}`,
+    body: `<div class="field"><label for="flag-note">Note (optional)</label><textarea id="flag-note" maxlength="500" placeholder="e.g. no matching sale"></textarea></div>`,
+    submitLabel: 'Flag',
+    danger: true,
+    onSubmit: async (form) => {
+      await api('PATCH', '/api/print-jobs/bulk-flag', { ids, note: form.querySelector('#flag-note').value.trim() });
+      await done();
+    }
+  });
+}
+
+async function loadAgents() {
+  const { agents } = await api('GET', '/api/agents');
+  $('agents-wrap').innerHTML = agents.length === 0 ? '<p class="muted" style="margin:0;">No agents registered yet.</p>'
+    : agents.map((a) => `
+      <div class="list-row">
+        <div style="min-width:0;"><div style="font-weight:600;">${escapeHtml(a.label)}</div>
+          <div class="muted small">${a.last_seen_at ? `Last seen ${escapeHtml(formatDbDate(a.last_seen_at))}` : 'Never connected'}</div></div>
+        <div class="row" style="gap:6px; flex-wrap:nowrap;">
+          ${!a.active ? '<span class="badge danger">Disabled</span>' : a.online ? '<span class="badge ok">Online</span>' : '<span class="badge">Offline</span>'}
+          <button type="button" class="btn btn-ghost btn-sm" data-agent="${a.id}" data-active="${a.active}">${a.active ? 'Disable' : 'Enable'}</button>
+        </div>
+      </div>`).join('');
+}
+
+// ---------------------------------------------------------------
+// Printed vs sold (admin)
+// ---------------------------------------------------------------
+function setupReconcile() {
+  $('rec-from').value = daysAgoString(13);
+  $('rec-to').value = localDateString();
+  $('rec-filters').addEventListener('submit', (e) => { e.preventDefault(); loadReconcile().catch((err) => toast(err.message, true)); });
+}
+
+async function loadReconcile() {
+  const q = new URLSearchParams({ from: $('rec-from').value, to: $('rec-to').value });
+  const data = await api('GET', `/api/reconciliation?${q.toString()}`);
+  const t = data.totals;
+
+  $('rec-setup').innerHTML = data.printServices.length > 0 ? '' : `
+    <div class="callout"><strong>No print services set up yet</strong>
+    <span class="small">Edit your print products (for example "B&amp;W print A4") and set <em>Print service</em> to Colour or B&amp;W, so their quantity sold counts as pages here. <a href="#products" data-go="products">Open products</a></span></div>`;
+  wireGoLinks($('rec-setup'));
+
+  $('rec-kpis').innerHTML = [
+    { label: 'Pages printed', value: t.color_printed + t.mono_printed, sub: `${t.color_printed} colour · ${t.mono_printed} B&W${t.unknown_printed ? ` · ${t.unknown_printed} unknown` : ''}` },
+    { label: 'Pages sold', value: round2(t.color_sold + t.mono_sold), sub: `${round2(t.color_sold)} colour · ${round2(t.mono_sold)} B&W` },
+    { label: 'Gap', value: plural(round2(t.gap), 'page'), sub: t.gap > 0 ? 'Printed but not sold' : 'Nothing unaccounted for' },
+    { label: 'Est. unbilled value', value: cur(t.estimated_value), sub: `At ${cur(data.prices.color)} colour / ${cur(data.prices.mono)} B&W per page` }
+  ].map(kpiCard).join('');
+
+  $('rec-table').innerHTML = data.rows.length === 0 ? emptyState('No printing or print-service sales in this range.') : `
+    <table>
+      <thead><tr><th>Day</th><th class="num">Colour printed</th><th class="num">Colour sold</th><th class="num">B&amp;W printed</th><th class="num">B&amp;W sold</th><th class="num">Unknown</th><th class="num">Gap</th><th class="num">Est. value</th></tr></thead>
+      <tbody>${data.rows.map((r) => `
+        <tr>
+          <td>${escapeHtml(dayLabel(r.day))}</td>
+          <td class="num">${r.color_printed}</td><td class="num">${round2(r.color_sold)}</td>
+          <td class="num">${r.mono_printed}</td><td class="num">${round2(r.mono_sold)}</td>
+          <td class="num">${r.unknown_printed || '<span class="muted">0</span>'}</td>
+          <td class="num"><span class="badge ${r.gap > 0 ? 'warn' : r.gap < 0 ? '' : 'ok'}">${r.gap === 0 ? 'Balanced' : `${r.gap > 0 ? '+' : ''}${round2(r.gap)} pages`}</span></td>
+          <td class="num">${r.estimated_value ? escapeHtml(cur(r.estimated_value)) : '<span class="muted">&mdash;</span>'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+// ---------------------------------------------------------------
+// Products (admin)
+// ---------------------------------------------------------------
+let productList = [];
+
+function setupProducts() {
+  $('product-add-btn').addEventListener('click', () => openProductModal(null));
+  $('product-search').addEventListener('input', renderProducts);
+  $('products-table-wrap').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    const p = productList.find((x) => x.id === Number(b.dataset.id));
+    if (!p) return;
+    try {
+      if (b.dataset.act === 'edit') openProductModal(p);
+      if (b.dataset.act === 'adjust') openAdjustModal(p);
+      if (b.dataset.act === 'history') await openStockHistory(p);
+      if (b.dataset.act === 'toggle') {
+        await api('PATCH', `/api/products/${p.id}/active`, { active: !p.active });
+        await loadCatalog();
+        await loadProducts();
+      }
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+async function loadProducts() {
+  const { products } = await api('GET', '/api/products?all=1');
+  productList = products;
+  renderProducts();
+}
+
+function renderProducts() {
+  const q = $('product-search').value.trim().toLowerCase();
+  const list = productList.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q));
+  const wrap = $('products-table-wrap');
+  if (productList.length === 0) { wrap.innerHTML = emptyState('No products yet. Add your first one.'); return; }
+  if (list.length === 0) { wrap.innerHTML = emptyState('No products match.'); return; }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Product</th><th>Category</th><th class="num">Price</th><th>Print service</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead>
+      <tbody>${list.map((p) => {
+        const low = p.track_stock && p.stock_qty <= p.reorder_level;
+        return `<tr>
+          <td><div style="font-weight:600;">${escapeHtml(p.name)}</div>${p.sku ? `<div class="muted small mono">${escapeHtml(p.sku)}</div>` : ''}</td>
+          <td>${p.category ? escapeHtml(p.category) : '<span class="muted">&mdash;</span>'}</td>
+          <td class="num">${escapeHtml(cur(p.price))}</td>
+          <td>${p.print_color_mode === 'color' ? '<span class="badge info">Colour</span>' : p.print_color_mode === 'mono' ? '<span class="badge">B&amp;W</span>' : '<span class="muted">&mdash;</span>'}</td>
+          <td class="num">${p.track_stock ? `<span class="${low ? 'badge warn' : ''}">${p.stock_qty}</span>` : '<span class="muted">Not tracked</span>'}</td>
+          <td>${statusBadge(p.active, 'Active', 'Inactive')}</td>
+          <td><div class="actions">
+            <button type="button" class="btn btn-outline btn-sm" data-act="edit" data-id="${p.id}">Edit</button>
+            ${p.track_stock ? `<button type="button" class="btn btn-outline btn-sm" data-act="adjust" data-id="${p.id}">Stock</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="history" data-id="${p.id}">History</button>` : ''}
+            <button type="button" class="btn btn-ghost btn-sm" data-act="toggle" data-id="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button>
+          </div></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function openProductModal(p) {
+  const editing = !!p;
+  const v = p || { name: '', sku: '', category: '', price: '', track_stock: 1, stock_qty: 0, reorder_level: 5, print_color_mode: null };
+  const cats = Array.from(new Set(productList.map((x) => x.category).filter(Boolean))).sort();
+  openModal({
+    title: editing ? `Edit ${p.name}` : 'Add product',
+    submitLabel: editing ? 'Save changes' : 'Add product',
+    body: `
+      <div class="form-grid">
+        <div class="field full"><label for="pm-name">Name</label><input id="pm-name" required maxlength="200" value="${escapeHtml(v.name)}"></div>
+        <div class="field"><label for="pm-price">Price (${escapeHtml(currentSettings.currency)})</label><input id="pm-price" type="number" min="0" step="0.01" required value="${escapeHtml(String(v.price))}"></div>
+        <div class="field"><label for="pm-sku">SKU / barcode (optional)</label><input id="pm-sku" maxlength="100" value="${escapeHtml(v.sku || '')}"></div>
+        <div class="field"><label for="pm-category">Category (optional)</label><input id="pm-category" list="pm-cats" maxlength="100" value="${escapeHtml(v.category || '')}"><datalist id="pm-cats">${cats.map((c) => `<option value="${escapeHtml(c)}">`).join('')}</datalist></div>
+        <div class="field"><label for="pm-print">Print service</label>
+          <select id="pm-print">
+            <option value="">Not a print service</option>
+            <option value="mono"${v.print_color_mode === 'mono' ? ' selected' : ''}>B&amp;W print (1 qty = 1 page)</option>
+            <option value="color"${v.print_color_mode === 'color' ? ' selected' : ''}>Colour print (1 qty = 1 page)</option>
+          </select></div>
+        <label class="check full"><input type="checkbox" id="pm-track"${v.track_stock ? ' checked' : ''}> Track stock for this product</label>
+        <div class="field" data-stock><label for="pm-stock">Stock on hand</label><input id="pm-stock" type="number" step="any" value="${v.stock_qty}"></div>
+        <div class="field" data-stock><label for="pm-reorder">Low-stock alert level</label><input id="pm-reorder" type="number" step="any" min="0" value="${v.reorder_level}"></div>
+      </div>
+      ${editing ? '<p class="muted small" style="margin:0;">Changing stock on hand here is logged in the product\'s stock history.</p>' : ''}`,
+    onOpen: (form) => {
+      const track = form.querySelector('#pm-track');
+      const sync = () => form.querySelectorAll('[data-stock]').forEach((el) => { el.hidden = !track.checked; });
+      track.addEventListener('change', sync);
+      sync();
+    },
+    onSubmit: async (form) => {
+      const val = (id) => form.querySelector(id).value;
+      const payload = {
+        name: val('#pm-name').trim(),
+        price: parseFloat(val('#pm-price')),
+        sku: val('#pm-sku').trim(),
+        category: val('#pm-category').trim(),
+        print_color_mode: val('#pm-print') || null,
+        track_stock: form.querySelector('#pm-track').checked,
+        stock_qty: parseFloat(val('#pm-stock')) || 0,
+        reorder_level: val('#pm-reorder') === '' ? 5 : parseFloat(val('#pm-reorder'))
+      };
+      if (editing) await api('PUT', `/api/products/${p.id}`, payload);
+      else await api('POST', '/api/products', payload);
+      toast(editing ? 'Product updated.' : 'Product added.');
+      await loadCatalog();
+      await loadProducts();
+    }
+  });
+}
+
+function openAdjustModal(p) {
+  openModal({
+    title: `Adjust stock: ${p.name}`,
+    submitLabel: 'Save adjustment',
+    body: `
+      <p class="muted" style="margin:0;">Currently ${p.stock_qty} in stock.</p>
+      <div class="form-grid">
+        <div class="field"><label for="adj-delta">Change</label><input id="adj-delta" type="number" step="any" required placeholder="20 to add, -5 to remove"></div>
+        <div class="field"><label for="adj-note">Reason</label><input id="adj-note" maxlength="300" placeholder="e.g. delivery received"></div>
+      </div>`,
+    onSubmit: async (form) => {
+      const delta = parseFloat(form.querySelector('#adj-delta').value);
+      if (!Number.isFinite(delta) || delta === 0) throw new Error('Enter a number other than 0.');
+      await api('POST', `/api/products/${p.id}/adjust-stock`, { delta, note: form.querySelector('#adj-note').value.trim() });
+      toast('Stock updated.');
+      await loadCatalog();
+      await loadProducts();
+    }
+  });
+}
+
+const MOVE_LABELS = { initial: 'Opening stock', sale: 'Sale', void: 'Sale voided', adjust: 'Adjustment', edit: 'Edited' };
+
+async function openStockHistory(p) {
+  const { movements } = await api('GET', `/api/products/${p.id}/movements`);
+  openModal({
+    title: `Stock history: ${p.name}`,
+    wide: true,
+    hideSubmit: true,
+    body: movements.length === 0 ? '<p class="muted" style="margin:0;">No stock movements recorded yet.</p>' : `
+      <div class="table-wrap"><table>
+        <thead><tr><th>When</th><th>What</th><th class="num">Change</th><th>Detail</th><th>By</th></tr></thead>
+        <tbody>${movements.map((m) => `<tr>
+          <td>${escapeHtml(formatDbDate(m.created_at))}</td>
+          <td>${escapeHtml(MOVE_LABELS[m.reason] || m.reason)}</td>
+          <td class="num"><span class="badge ${m.delta < 0 ? 'warn' : 'ok'}">${m.delta > 0 ? '+' : ''}${m.delta}</span></td>
+          <td>${m.receipt_no ? `<a href="receipt.html?id=${m.sale_id}" target="_blank" rel="noopener" class="mono">${escapeHtml(m.receipt_no)}</a>` : escapeHtml(m.note || '')}</td>
+          <td>${escapeHtml(m.user_name || '')}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`
   });
 }
 
 // ---------------------------------------------------------------
 // Users (admin)
 // ---------------------------------------------------------------
+let userList = [];
+
 function setupUsers() {
-  document.getElementById('user-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const errorEl = document.getElementById('user-error');
-    errorEl.style.display = 'none';
-    try {
-      await api('POST', '/api/users', {
-        full_name: document.getElementById('u-fullname').value.trim(),
-        username: document.getElementById('u-username').value.trim(),
-        password: document.getElementById('u-password').value,
-        role: document.getElementById('u-role').value
+  $('user-add-btn').addEventListener('click', () => {
+    openModal({
+      title: 'Add user',
+      submitLabel: 'Add user',
+      body: `
+        <div class="form-grid">
+          <div class="field full"><label for="nu-name">Full name</label><input id="nu-name" required maxlength="100"></div>
+          <div class="field"><label for="nu-username">Username</label><input id="nu-username" required maxlength="60" autocomplete="off"></div>
+          <div class="field"><label for="nu-role">Role</label><select id="nu-role"><option value="cashier">Cashier</option><option value="admin">Admin</option></select></div>
+          <div class="field full"><label for="nu-password">Password (min 6 characters)</label><input id="nu-password" type="password" required minlength="6" autocomplete="new-password"></div>
+        </div>`,
+      onSubmit: async (form) => {
+        await api('POST', '/api/users', {
+          full_name: form.querySelector('#nu-name').value.trim(),
+          username: form.querySelector('#nu-username').value.trim(),
+          role: form.querySelector('#nu-role').value,
+          password: form.querySelector('#nu-password').value
+        });
+        toast('User added.');
+        await loadUsers();
+      }
+    });
+  });
+
+  $('users-table-wrap').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    const u = userList.find((x) => x.id === Number(b.dataset.id));
+    if (!u) return;
+    if (b.dataset.act === 'edit') {
+      openModal({
+        title: `Edit ${u.username}`,
+        body: `
+          <div class="field"><label for="eu-name">Full name</label><input id="eu-name" required maxlength="100" value="${escapeHtml(u.full_name)}"></div>
+          <div class="field"><label for="eu-role">Role</label><select id="eu-role"><option value="cashier"${u.role === 'cashier' ? ' selected' : ''}>Cashier</option><option value="admin"${u.role === 'admin' ? ' selected' : ''}>Admin</option></select></div>`,
+        onSubmit: async (form) => {
+          const fullName = form.querySelector('#eu-name').value.trim();
+          await api('PATCH', `/api/users/${u.id}`, { full_name: fullName, role: form.querySelector('#eu-role').value });
+          toast('User updated.');
+          if (u.id === currentUser.id) {
+            currentUser.full_name = fullName;
+            $('nav-user-name').textContent = fullName;
+            $('nav-avatar').textContent = initials(fullName);
+          }
+          await loadUsers();
+        }
       });
-      document.getElementById('user-form').reset();
-      loadUsers();
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.style.display = 'block';
+    }
+    if (b.dataset.act === 'password') {
+      openModal({
+        title: `Reset password for ${u.username}`,
+        submitLabel: 'Reset password',
+        body: `<div class="field"><label for="rp-pass">New password (min 6 characters)</label><input id="rp-pass" type="password" required minlength="6" autocomplete="new-password"></div>`,
+        onSubmit: async (form) => {
+          await api('POST', `/api/users/${u.id}/reset-password`, { newPassword: form.querySelector('#rp-pass').value });
+          toast('Password updated.');
+        }
+      });
+    }
+    if (b.dataset.act === 'toggle') {
+      try {
+        await api('PATCH', `/api/users/${u.id}/active`, { active: !u.active });
+        await loadUsers();
+      } catch (err) { toast(err.message, true); }
     }
   });
 }
 
 async function loadUsers() {
   const { users } = await api('GET', '/api/users');
-  const wrap = document.getElementById('users-table-wrap');
-  const rows = users.map((u) => `
-    <tr>
-      <td>${escapeHtml(u.full_name)}</td>
-      <td>${escapeHtml(u.username)}</td>
-      <td style="text-transform:capitalize;">${u.role}</td>
-      <td>${u.active ? '<span class="badge">Active</span>' : '<span class="badge danger">Disabled</span>'}</td>
-      <td>
-        ${u.id === currentUser.id ? '' : `<button class="btn btn-outline btn-sm toggle-active" data-id="${u.id}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>`}
-        <button class="btn btn-outline btn-sm reset-pw" data-id="${u.id}">Reset password</button>
-      </td>
-    </tr>
-  `).join('');
-
-  wrap.innerHTML = `
+  userList = users;
+  $('users-table-wrap').innerHTML = `
     <table>
-      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-
-  wrap.querySelectorAll('.toggle-active').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const active = btn.dataset.active === '1';
-      await api('PATCH', `/api/users/${btn.dataset.id}/active`, { active: !active });
-      loadUsers();
-    });
-  });
-
-  wrap.querySelectorAll('.reset-pw').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const newPassword = prompt('Enter a new password for this user (min 6 characters):');
-      if (!newPassword) return;
-      try {
-        await api('POST', `/api/users/${btn.dataset.id}/reset-password`, { newPassword });
-        alert('Password updated.');
-      } catch (err) {
-        alert(err.message);
-      }
-    });
-  });
-}
-
-// ---------------------------------------------------------------
-// Products (admin)
-// ---------------------------------------------------------------
-function setupProductForm() {
-  const trackCheckbox = document.getElementById('p-track-stock');
-  const stockFields = document.getElementById('stock-fields');
-  trackCheckbox.addEventListener('change', () => {
-    stockFields.style.display = trackCheckbox.checked ? 'flex' : 'none';
-  });
-
-  document.getElementById('product-cancel-btn').addEventListener('click', resetProductForm);
-
-  document.getElementById('product-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const errorEl = document.getElementById('product-error');
-    errorEl.style.display = 'none';
-
-    const payload = {
-      name: document.getElementById('p-name').value.trim(),
-      sku: document.getElementById('p-sku').value.trim(),
-      category: document.getElementById('p-category').value.trim(),
-      price: parseFloat(document.getElementById('p-price').value) || 0,
-      track_stock: document.getElementById('p-track-stock').checked,
-      stock_qty: parseFloat(document.getElementById('p-stock').value) || 0,
-      reorder_level: parseFloat(document.getElementById('p-reorder').value) || 0,
-    };
-
-    try {
-      if (editingProductId) {
-        await api('PUT', `/api/products/${editingProductId}`, payload);
-      } else {
-        await api('POST', '/api/products', payload);
-      }
-      resetProductForm();
-      await loadProductCatalog();
-      loadProducts();
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.style.display = 'block';
-    }
-  });
-}
-
-function resetProductForm() {
-  editingProductId = null;
-  document.getElementById('product-form').reset();
-  document.getElementById('p-track-stock').checked = true;
-  document.getElementById('stock-fields').style.display = 'flex';
-  document.getElementById('product-form-title').textContent = 'Add product';
-  document.getElementById('product-submit-btn').textContent = 'Add product';
-  document.getElementById('product-cancel-btn').style.display = 'none';
-}
-
-async function loadProducts() {
-  const { products: list } = await api('GET', '/api/products?all=1');
-  const wrap = document.getElementById('products-table-wrap');
-
-  if (list.length === 0) {
-    wrap.innerHTML = `<div class="empty-state">No products yet — add your first one above.</div>`;
-    return;
-  }
-
-  const rows = list.map((p) => `
-    <tr>
-      <td>${escapeHtml(p.name)}${p.sku ? `<div class="muted" style="font-size:11.5px;">${escapeHtml(p.sku)}</div>` : ''}</td>
-      <td>${p.category ? escapeHtml(p.category) : '&mdash;'}</td>
-      <td class="num">${money(p.price, currentSettings.currency)}</td>
-      <td class="num">${p.track_stock ? p.stock_qty : '&mdash;'}</td>
-      <td>${p.active ? '<span class="badge">Active</span>' : '<span class="badge danger">Inactive</span>'}</td>
-      <td>
-        <button class="btn btn-outline btn-sm edit-product" data-id="${p.id}">Edit</button>
-        ${p.track_stock ? `<button class="btn btn-outline btn-sm adjust-stock" data-id="${p.id}">Adjust stock</button>` : ''}
-        <button class="btn btn-outline btn-sm toggle-product" data-id="${p.id}" data-active="${p.active}">${p.active ? 'Deactivate' : 'Activate'}</button>
-      </td>
-    </tr>
-  `).join('');
-
-  wrap.innerHTML = `
-    <table>
-      <thead><tr><th>Product</th><th>Category</th><th class="num">Price</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-
-  wrap.querySelectorAll('.edit-product').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const product = list.find((p) => String(p.id) === btn.dataset.id);
-      editingProductId = product.id;
-      document.getElementById('p-name').value = product.name;
-      document.getElementById('p-sku').value = product.sku || '';
-      document.getElementById('p-category').value = product.category || '';
-      document.getElementById('p-price').value = product.price;
-      document.getElementById('p-track-stock').checked = !!product.track_stock;
-      document.getElementById('stock-fields').style.display = product.track_stock ? 'flex' : 'none';
-      document.getElementById('p-stock').value = product.stock_qty;
-      document.getElementById('p-reorder').value = product.reorder_level;
-      document.getElementById('product-form-title').textContent = `Edit ${product.name}`;
-      document.getElementById('product-submit-btn').textContent = 'Save changes';
-      document.getElementById('product-cancel-btn').style.display = 'inline-flex';
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-  });
-
-  wrap.querySelectorAll('.toggle-product').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const active = btn.dataset.active === '1';
-      await api('PATCH', `/api/products/${btn.dataset.id}/active`, { active: !active });
-      await loadProductCatalog();
-      loadProducts();
-    });
-  });
-
-  wrap.querySelectorAll('.adjust-stock').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const input = prompt('Enter stock change (e.g. 20 to add stock, -5 to remove):');
-      if (!input) return;
-      const delta = parseFloat(input);
-      if (Number.isNaN(delta)) { alert('Please enter a valid number.'); return; }
-      await api('POST', `/api/products/${btn.dataset.id}/adjust-stock`, { delta });
-      await loadProductCatalog();
-      loadProducts();
-    });
-  });
-}
-
-// ---------------------------------------------------------------
-// Print Monitoring (admin)
-// ---------------------------------------------------------------
-function setupPrintMonitor() {
-  document.getElementById('agent-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const errorEl = document.getElementById('agent-error');
-    errorEl.style.display = 'none';
-    const label = document.getElementById('agent-label').value.trim();
-    if (!label) return;
-
-    try {
-      const result = await api('POST', '/api/agents', { label });
-      document.getElementById('agent-label').value = '';
-      const reveal = document.getElementById('agent-key-reveal');
-      reveal.style.display = 'block';
-      reveal.innerHTML = `
-        <div class="card" style="background:var(--accent-soft); border-color:var(--accent);">
-          <strong>Agent "${escapeHtml(result.label)}" registered.</strong>
-          <p style="margin:8px 0 4px; font-size:13px;">Copy this API key into the agent's <code>config.json</code> now &mdash; it will not be shown again:</p>
-          <code style="display:block; padding:8px; background:#fff; color:#111827; border-radius:3px; word-break:break-all; font-size:12.5px;">${escapeHtml(result.api_key)}</code>
-        </div>
-      `;
-      loadAgents();
-    } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.style.display = 'block';
-    }
-  });
-
-  document.getElementById('pj-filter-btn').addEventListener('click', loadPrintJobs);
-  document.getElementById('pj-bulk-review').addEventListener('click', () => bulkUpdatePrintJobs('review'));
-  document.getElementById('pj-bulk-flag').addEventListener('click', () => bulkUpdatePrintJobs('flag'));
-
-  const summaryDate = document.getElementById('summary-date');
-  summaryDate.value = localDateString();
-  summaryDate.addEventListener('change', loadPrintSummary);
-}
-
-async function loadAgents() {
-  const { agents } = await api('GET', '/api/agents');
-  const wrap = document.getElementById('agents-table-wrap');
-  if (agents.length === 0) {
-    wrap.innerHTML = `<div class="empty-state">No agents registered yet.</div>`;
-    return;
-  }
-  const rows = agents.map((a) => `
-    <tr>
-      <td>${escapeHtml(a.label)}</td>
-      <td>${a.online ? '<span class="badge">Online</span>' : '<span class="badge danger">Offline</span>'}</td>
-      <td>${a.last_seen_at ? formatDbDate(a.last_seen_at) : 'Never'}</td>
-      <td>${a.active ? '<span class="badge">Active</span>' : '<span class="badge danger">Disabled</span>'}</td>
-      <td><button class="btn btn-outline btn-sm toggle-agent" data-id="${a.id}" data-active="${a.active}">${a.active ? 'Disable' : 'Enable'}</button></td>
-    </tr>
-  `).join('');
-  wrap.innerHTML = `
-    <table>
-      <thead><tr><th>Agent</th><th>Status</th><th>Last seen</th><th>Enabled</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-  wrap.querySelectorAll('.toggle-agent').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const active = btn.dataset.active === '1';
-      await api('PATCH', `/api/agents/${btn.dataset.id}/active`, { active: !active });
-      loadAgents();
-    });
-  });
-}
-
-async function loadPrintSummary() {
-  const date = document.getElementById('summary-date').value || localDateString();
-  const { totals, byPrinter } = await api('GET', `/api/print-jobs/summary?date=${date}`);
-
-  const grid = document.getElementById('summary-kpi-grid');
-  grid.innerHTML = `
-    <div class="card kpi-card">
-      <div class="kpi-label">Jobs printed</div>
-      <div class="kpi-value">${totals.job_count}</div>
-      <div class="kpi-sub">${totals.total_pages} pages total</div>
-    </div>
-    <div class="card kpi-card">
-      <div class="kpi-label">Color / B&amp;W</div>
-      <div class="kpi-value">${totals.color_jobs} / ${totals.mono_jobs}</div>
-      <div class="kpi-sub">${totals.color_pages} color pages, ${totals.mono_pages} mono pages${totals.unknown_color_jobs ? ` &middot; ${totals.unknown_color_jobs} undetected` : ''}</div>
-    </div>
-    <div class="card kpi-card">
-      <div class="kpi-label">Duplex / Single-sided</div>
-      <div class="kpi-value">${totals.duplex_jobs} / ${totals.simplex_jobs}</div>
-      <div class="kpi-sub">Duplex is a best-effort estimate (see agent docs)</div>
-    </div>
-  `;
-
-  const byPrinterWrap = document.getElementById('summary-by-printer');
-  if (byPrinter.length === 0) {
-    byPrinterWrap.innerHTML = '';
-  } else {
-    const rows = byPrinter.map((p) => `
-      <tr><td>${escapeHtml(p.printer_name)}</td><td class="num">${p.job_count}</td><td class="num">${p.total_pages}</td></tr>
-    `).join('');
-    byPrinterWrap.innerHTML = `
-      <table>
-        <thead><tr><th>Printer</th><th class="num">Jobs</th><th class="num">Pages</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
-  }
-}
-
-async function loadPrintJobs() {
-  const status = document.getElementById('pj-status').value;
-  const from = document.getElementById('pj-from').value;
-  const to = document.getElementById('pj-to').value;
-
-  const params = new URLSearchParams();
-  if (status) params.set('status', status);
-  if (from) params.set('from', from);
-  if (to) params.set('to', to);
-
-  const { jobs } = await api('GET', `/api/print-jobs?${params.toString()}`);
-  const wrap = document.getElementById('print-jobs-table-wrap');
-
-  if (jobs.length === 0) {
-    wrap.innerHTML = `<div class="empty-state">No print jobs found for this filter.</div>`;
-    updateBulkButtons();
-    return;
-  }
-
-  const rows = jobs.map((j) => `
-    <tr>
-      <td><input type="checkbox" class="pj-check" data-id="${j.id}"></td>
-      <td>${escapeHtml(j.document_name) || '<span class="muted">(untitled)</span>'}</td>
-      <td>${escapeHtml(j.printer_name)}<div class="muted" style="font-size:11px;">${escapeHtml(j.agent_label)}</div></td>
-      <td>${escapeHtml(j.submitted_by) || '&mdash;'}</td>
-      <td class="num">${j.pages != null ? j.pages : '<span class="muted">?</span>'}</td>
-      <td>${colorModeBadge(j.color_mode)} ${duplexBadge(j.duplex)}</td>
-      <td>${new Date(j.submitted_at).toLocaleString()}</td>
-      <td>${statusCell(j)}</td>
-    </tr>
-  `).join('');
-
-  wrap.innerHTML = `
-    <table>
-      <thead><tr><th></th><th>Document</th><th>Printer</th><th>Submitted by</th><th class="num">Pages</th><th>Type</th><th>Submitted</th><th>Status</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-
-  wrap.querySelectorAll('.pj-check').forEach((cb) => cb.addEventListener('change', updateBulkButtons));
-  updateBulkButtons();
-}
-
-function colorModeBadge(mode) {
-  if (mode === 'color') return '<span class="badge" style="background:rgba(123,208,255,0.15); color:var(--tertiary);">Color</span>';
-  if (mode === 'mono') return '<span class="badge">B&amp;W</span>';
-  return '<span class="badge danger">Mode unknown</span>';
-}
-
-function duplexBadge(duplex) {
-  if (duplex === 'duplex') return '<span class="badge">Duplex</span>';
-  if (duplex === 'simplex') return '<span class="badge" style="background:rgba(123,208,255,0.15); color:var(--tertiary);">Single-sided</span>';
-  return '<span class="badge danger">Sides unknown</span>';
-}
-
-function statusCell(j) {
-  if (j.status === 'approved') return '<span class="badge">Reviewed</span>';
-  if (j.status === 'rejected') {
-    return `<span class="badge danger">Flagged</span>${j.note ? `<div class="muted" style="font-size:11px;">${escapeHtml(j.note)}</div>` : ''}`;
-  }
-  return '<span class="badge" style="background:rgba(245,158,11,0.15); color:#f59e0b;">Unreviewed</span>';
-}
-
-function updateBulkButtons() {
-  const checked = document.querySelectorAll('.pj-check:checked').length;
-  document.getElementById('pj-bulk-review').disabled = checked === 0;
-  document.getElementById('pj-bulk-flag').disabled = checked === 0;
-}
-
-async function bulkUpdatePrintJobs(action) {
-  const ids = Array.from(document.querySelectorAll('.pj-check:checked')).map((cb) => Number(cb.dataset.id));
-  if (ids.length === 0) return;
-
-  if (action === 'review') {
-    await api('PATCH', '/api/print-jobs/bulk-review', { ids });
-  } else {
-    const note = prompt(`Optional note for flagging these ${ids.length} job(s):`);
-    if (note === null) return; // cancelled
-    await api('PATCH', '/api/print-jobs/bulk-flag', { ids, note });
-  }
-  loadPrintJobs();
+      <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Added</th><th></th></tr></thead>
+      <tbody>${users.map((u) => `<tr>
+        <td><div class="row" style="gap:10px; flex-wrap:nowrap;"><span class="avatar" style="background:var(--line-soft); color:var(--ink);" aria-hidden="true">${escapeHtml(initials(u.full_name || u.username))}</span><span style="font-weight:600;">${escapeHtml(u.full_name)}${u.id === currentUser.id ? ' <span class="muted small">(you)</span>' : ''}</span></div></td>
+        <td class="mono">${escapeHtml(u.username)}</td>
+        <td><span class="badge${u.role === 'admin' ? ' info' : ''}" style="text-transform:capitalize;">${escapeHtml(u.role)}</span></td>
+        <td>${statusBadge(u.active, 'Active', 'Disabled')}</td>
+        <td>${escapeHtml((parseDbDate(u.created_at) || new Date()).toLocaleDateString())}</td>
+        <td><div class="actions">
+          <button type="button" class="btn btn-outline btn-sm" data-act="edit" data-id="${u.id}">Edit</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="password" data-id="${u.id}">Reset password</button>
+          ${u.id === currentUser.id ? '' : `<button type="button" class="btn btn-ghost btn-sm" data-act="toggle" data-id="${u.id}">${u.active ? 'Disable' : 'Enable'}</button>`}
+        </div></td>
+      </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 // ---------------------------------------------------------------
 // Settings (admin)
 // ---------------------------------------------------------------
-function fillSettingsForm() {
-  document.getElementById('s-business-name').value = currentSettings.business_name;
-  document.getElementById('s-address').value = currentSettings.address;
-  document.getElementById('s-phone').value = currentSettings.phone;
-  document.getElementById('s-email').value = currentSettings.email;
-  document.getElementById('s-tax-rate').value = currentSettings.tax_rate;
-  document.getElementById('s-currency').value = currentSettings.currency;
-  document.getElementById('s-receipt-prefix').value = currentSettings.receipt_prefix;
-  document.getElementById('s-footer').value = currentSettings.footer_note;
+let pendingLogo; // undefined = unchanged, '' = remove, data URL = new logo
 
-  const preview = document.getElementById('s-logo-preview');
-  if (currentSettings.logo_data_url) {
-    preview.src = currentSettings.logo_data_url;
-    preview.style.display = 'block';
-  } else {
-    preview.style.display = 'none';
-  }
+function fillSettingsForm() {
+  const s = currentSettings;
+  $('s-business-name').value = s.business_name;
+  $('s-address').value = s.address;
+  $('s-phone').value = s.phone;
+  $('s-email').value = s.email;
+  $('s-tax-rate').value = s.tax_rate;
+  $('s-currency').value = s.currency;
+  $('s-receipt-prefix').value = s.receipt_prefix;
+  $('s-footer').value = s.footer_note;
+  pendingLogo = undefined;
+  $('s-logo').value = '';
+  showLogoPreview(s.logo_data_url);
+  $('settings-error').hidden = true;
+  $('settings-success').hidden = true;
 }
 
-function setupSettingsForm() {
-  let logoDataUrl = '';
+function showLogoPreview(src) {
+  const img = $('s-logo-preview');
+  img.hidden = !src;
+  if (src) img.src = src; else img.removeAttribute('src');
+  $('s-logo-remove').hidden = !src;
+}
 
-  document.getElementById('s-logo').addEventListener('change', (e) => {
+function setupSettings() {
+  $('s-logo').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     if (file.size > 1.5 * 1024 * 1024) {
-      alert('Please choose a logo image smaller than 1.5MB.');
+      toast('Please choose a logo image smaller than 1.5 MB.', true);
       e.target.value = '';
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
-      logoDataUrl = reader.result;
-      const preview = document.getElementById('s-logo-preview');
-      preview.src = logoDataUrl;
-      preview.style.display = 'block';
-    };
+    reader.onload = () => { pendingLogo = reader.result; showLogoPreview(pendingLogo); };
     reader.readAsDataURL(file);
   });
+  $('s-logo-remove').addEventListener('click', () => { pendingLogo = ''; $('s-logo').value = ''; showLogoPreview(''); });
 
-  document.getElementById('settings-form').addEventListener('submit', async (e) => {
+  $('settings-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const errorEl = document.getElementById('settings-error');
-    const successEl = document.getElementById('settings-success');
-    errorEl.style.display = 'none';
-    successEl.style.display = 'none';
-
+    $('settings-error').hidden = true;
+    $('settings-success').hidden = true;
     try {
       await api('PUT', '/api/settings', {
-        business_name: document.getElementById('s-business-name').value.trim(),
-        address: document.getElementById('s-address').value.trim(),
-        phone: document.getElementById('s-phone').value.trim(),
-        email: document.getElementById('s-email').value.trim(),
-        tax_rate: parseFloat(document.getElementById('s-tax-rate').value) || 0,
-        currency: document.getElementById('s-currency').value.trim(),
-        receipt_prefix: document.getElementById('s-receipt-prefix').value.trim(),
-        footer_note: document.getElementById('s-footer').value.trim(),
-        logo_data_url: logoDataUrl || currentSettings.logo_data_url
+        business_name: $('s-business-name').value.trim(),
+        address: $('s-address').value.trim(),
+        phone: $('s-phone').value.trim(),
+        email: $('s-email').value.trim(),
+        tax_rate: parseFloat($('s-tax-rate').value) || 0,
+        currency: $('s-currency').value.trim(),
+        receipt_prefix: $('s-receipt-prefix').value.trim(),
+        footer_note: $('s-footer').value.trim(),
+        logo_data_url: pendingLogo === undefined ? currentSettings.logo_data_url : pendingLogo
       });
-
-      const settingsRes = await api('GET', '/api/settings');
-      currentSettings = settingsRes.settings;
-      document.getElementById('brand-business').textContent = currentSettings.business_name;
-      document.getElementById('tax-rate-display').value = `${currentSettings.tax_rate}%`;
-      successEl.style.display = 'block';
+      await loadSettings();
+      pendingLogo = undefined;
+      $('settings-success').hidden = false;
     } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.style.display = 'block';
+      showError($('settings-error'), err.message);
     }
   });
 }
@@ -869,24 +1334,23 @@ function setupSettingsForm() {
 // ---------------------------------------------------------------
 // Account
 // ---------------------------------------------------------------
-function setupAccountForm() {
-  document.getElementById('password-form').addEventListener('submit', async (e) => {
+function setupAccount() {
+  $('password-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const errorEl = document.getElementById('password-error');
-    const successEl = document.getElementById('password-success');
-    errorEl.style.display = 'none';
-    successEl.style.display = 'none';
-
+    $('password-error').hidden = true;
+    $('password-success').hidden = true;
+    if ($('new-password').value !== $('confirm-password').value) {
+      return showError($('password-error'), 'The new passwords do not match.');
+    }
     try {
       await api('POST', '/api/auth/change-password', {
-        currentPassword: document.getElementById('cur-password').value,
-        newPassword: document.getElementById('new-password').value
+        currentPassword: $('cur-password').value,
+        newPassword: $('new-password').value
       });
-      document.getElementById('password-form').reset();
-      successEl.style.display = 'block';
+      $('password-form').reset();
+      $('password-success').hidden = false;
     } catch (err) {
-      errorEl.textContent = err.message;
-      errorEl.style.display = 'block';
+      showError($('password-error'), err.message);
     }
   });
 }

@@ -1,12 +1,9 @@
 const db = require('../db');
+const { moveStock } = require('./stock');
+const { localDateString } = require('./dates');
 
 function round2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-function localDateStamp(d = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
 
 function generateReceiptNo() {
@@ -14,7 +11,7 @@ function generateReceiptNo() {
   const prefix = (settings && settings.receipt_prefix) || 'RCT';
   // Use the shop's local date, not UTC, so receipts issued just after
   // midnight local time aren't stamped with the previous day.
-  const base = `${prefix}-${localDateStamp()}-`;
+  const base = `${prefix}-${localDateString().replace(/-/g, '')}-`;
 
   // Continue from the highest sequence already used for this prefix+day.
   // (Counting LIKE matches instead treats "_" / "%" in a custom prefix as
@@ -53,18 +50,40 @@ function validateItems(items) {
   }
 }
 
+const PAYMENT_METHODS = ['cash', 'momo', 'card'];
+
+function isDayClosed(date) {
+  return !!db.prepare('SELECT 1 FROM day_closings WHERE business_date = ?').get(date);
+}
+
 /**
- * Create a sale + its line items in one transaction, decrementing stock for
- * any tracked products referenced. Returns { id, receipt_no, total }.
+ * Create a sale + its line items in one transaction, decrementing (and
+ * logging) stock for any tracked products referenced.
+ * Returns { id, receipt_no, total, change_due }.
  *
- * userId        - the user the sale is recorded under
- * customerName  - free text, may be blank
- * items         - [{ name, qty, unit_price, product_id? }]
- * discountType  - 'amount' | 'percent'
- * discountValue - number
+ * userId         - the user the sale is recorded under
+ * customerName   - free text, may be blank
+ * customerPhone  - free text, may be blank
+ * items          - [{ name, qty, unit_price, product_id? }]
+ * discountType   - 'amount' | 'percent'
+ * discountValue  - number
+ * paymentMethod  - 'cash' | 'momo' | 'card' (default cash)
+ * amountTendered - cash handed over (cash only, optional; must cover the total)
  */
-function createSale({ userId, customerName, items, discountType, discountValue }) {
+function createSale({
+  userId, customerName, customerPhone, items, discountType, discountValue,
+  paymentMethod, amountTendered
+}) {
   validateItems(items);
+
+  if (isDayClosed(localDateString())) {
+    throw new Error('Today has already been closed. An admin must reopen it in Reports before more sales can be recorded.');
+  }
+
+  const method = paymentMethod == null || paymentMethod === '' ? 'cash' : paymentMethod;
+  if (!PAYMENT_METHODS.includes(method)) {
+    throw new Error('Payment method must be cash, momo or card');
+  }
 
   const settings = db.prepare('SELECT tax_rate FROM settings WHERE id = 1').get();
   const taxRate = settings ? settings.tax_rate : 0;
@@ -82,18 +101,25 @@ function createSale({ userId, customerName, items, discountType, discountValue }
   const taxAmount = round2((taxableAmount * taxRate) / 100);
   const total = round2(taxableAmount + taxAmount);
 
+  let tendered = null;
+  let changeDue = null;
+  if (method === 'cash' && amountTendered != null && amountTendered !== '') {
+    tendered = round2(Number(amountTendered));
+    if (!Number.isFinite(tendered) || tendered < total) {
+      throw new Error('Amount tendered is less than the total');
+    }
+    changeDue = round2(tendered - total);
+  }
+
   const insertSale = db.prepare(`
     INSERT INTO sales (
-      receipt_no, user_id, customer_name, subtotal,
+      receipt_no, user_id, customer_name, customer_phone, subtotal,
       discount_type, discount_value, discount_amount,
-      tax_rate, tax_amount, total
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      tax_rate, tax_amount, total, payment_method, amount_tendered, change_due
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertItem = db.prepare(`
     INSERT INTO sale_items (sale_id, name, qty, unit_price, line_total, product_id) VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  const decrementStock = db.prepare(`
-    UPDATE products SET stock_qty = stock_qty - ? WHERE id = ? AND track_stock = 1
   `);
 
   let receiptNo;
@@ -101,19 +127,20 @@ function createSale({ userId, customerName, items, discountType, discountValue }
     // Generated inside the transaction so the number and the insert are atomic.
     receiptNo = generateReceiptNo();
     const info = insertSale.run(
-      receiptNo, userId, String(customerName || '').trim(), subtotal,
-      dType, dValue, discountAmount, taxRate, taxAmount, total
+      receiptNo, userId, String(customerName || '').trim().slice(0, 200),
+      String(customerPhone || '').trim().slice(0, 40), subtotal,
+      dType, dValue, discountAmount, taxRate, taxAmount, total, method, tendered, changeDue
     );
     const id = info.lastInsertRowid;
     for (const item of items) {
       const productId = item.product_id ? Number(item.product_id) : null;
       insertItem.run(id, String(item.name).trim(), item.qty, item.unit_price, round2(item.qty * item.unit_price), productId);
-      if (productId) decrementStock.run(item.qty, productId);
+      if (productId) moveStock({ productId, delta: -item.qty, reason: 'sale', saleId: id, userId });
     }
     return id;
   })();
 
-  return { id: saleId, receipt_no: receiptNo, total };
+  return { id: saleId, receipt_no: receiptNo, total, change_due: changeDue };
 }
 
-module.exports = { createSale, round2, generateReceiptNo, validateItems };
+module.exports = { createSale, round2, generateReceiptNo, validateItems, isDayClosed, PAYMENT_METHODS };
