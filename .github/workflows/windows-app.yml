@@ -1,0 +1,83 @@
+name: Windows app
+
+on:
+  push:
+    paths:
+      - 'server/**'
+      - 'public/**'
+      - 'agent/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/windows-app.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+
+      - run: npm ci
+
+      - name: Agent tests (SNMP)
+        run: npm run test:agent
+
+      - name: Build ReceiptSystem.exe and PrintMonitorAgent.exe
+        run: npm run build:exe
+
+      - name: Smoke test the apps
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Resolve-Path 'dist/ReceiptSystem-win-x64'
+          $env:PORT = '3999'; $env:NO_BROWSER = '1'
+          $server = Start-Process -FilePath "$dir/ReceiptSystem.exe" -WorkingDirectory $dir -PassThru `
+            -RedirectStandardOutput server.log -RedirectStandardError server.err
+          $base = 'http://localhost:3999'
+          $up = $false
+          for ($i = 0; $i -lt 40 -and -not $up; $i++) {
+            Start-Sleep -Seconds 1
+            try { $up = (Invoke-WebRequest "$base/login.html" -UseBasicParsing).StatusCode -eq 200 } catch {}
+          }
+          if (-not $up) { Get-Content server.log, server.err; throw 'ReceiptSystem.exe did not start' }
+
+          $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+          $json = 'application/json'
+          $login = Invoke-RestMethod -Method Post "$base/api/auth/login" -WebSession $s -ContentType $json `
+            -Body '{"username":"admin","password":"admin123"}'
+          if ($login.user.username -ne 'admin') { throw 'Login failed' }
+
+          $sale = Invoke-RestMethod -Method Post "$base/api/sales" -WebSession $s -ContentType $json `
+            -Body '{"items":[{"name":"Test print","qty":2,"unit_price":1.5}],"payment_method":"cash","amount_tendered":5}'
+          if ($sale.total -ne 3 -or $sale.change_due -ne 2) { throw "Unexpected sale: $($sale | ConvertTo-Json)" }
+          Invoke-RestMethod "$base/api/insights/forecast" -WebSession $s | Out-Null
+          Invoke-RestMethod "$base/api/insights/toner" -WebSession $s | Out-Null
+          if (-not (Test-Path "$dir/data/receipts.db")) { throw 'Database was not created beside the exe' }
+          Write-Host "Server OK: sale $($sale.receipt_no)"
+
+          # Agent: register, configure, run, and check it reports in.
+          $agent = Invoke-RestMethod -Method Post "$base/api/agents" -WebSession $s -ContentType $json -Body '{"label":"CI runner"}'
+          @{ backendUrl = $base; agentApiKey = $agent.api_key; heartbeatIntervalMs = 2000; readSupplies = $false } |
+            ConvertTo-Json | Set-Content -Encoding utf8 "$dir/config.json"
+          $agentProc = Start-Process -FilePath "$dir/PrintMonitorAgent.exe" -WorkingDirectory $dir -PassThru `
+            -RedirectStandardOutput agent.log -RedirectStandardError agent.err
+          Start-Sleep -Seconds 10
+          $agents = Invoke-RestMethod "$base/api/agents" -WebSession $s
+          $ci = $agents.agents | Where-Object { $_.label -eq 'CI runner' }
+          Get-Content agent.log -ErrorAction SilentlyContinue
+          if ($ci.online -ne 1) { Get-Content agent.err -ErrorAction SilentlyContinue; throw 'PrintMonitorAgent.exe did not report in' }
+          Write-Host 'Agent OK'
+
+          Stop-Process -Id $agentProc.Id -Force
+          Stop-Process -Id $server.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReceiptSystem-win-x64
+          path: dist/ReceiptSystem-win-x64.zip
+          retention-days: 30

@@ -3,7 +3,7 @@
 A small multi-user system for recording sales and printing A5 receipts.
 Built with Node.js, Express, and SQLite — no external database server to set up.
 
-**On Windows?** See [`WINDOWS-SETUP.md`](./WINDOWS-SETUP.md) for one-click setup scripts and a walkthrough of testing Print Monitoring on the same PC.
+**On Windows?** There's a standalone app, `ReceiptSystem.exe`, that needs no Node.js install: download the `ReceiptSystem-win-x64` artifact from the latest "Windows app" GitHub Actions run, or build it with `npm run build:exe`. See [`WINDOWS-SETUP.md`](./WINDOWS-SETUP.md).
 
 ## Features
 
@@ -24,6 +24,7 @@ Built with Node.js, Express, and SQLite — no external database server to set u
 - **Busy hours and staffing** (`traffic.js`, admin, on Reports) — weekday × hour heatmap of customers per hour; service time measured from back-to-back sales; recommended cashiers per hour from the Erlang C queueing model (80% served within 2 minutes). Opening hours are learned per weekday from when sales happen.
 - **Product mix and margins** (`productMix.js`, admin, on Reports) — ABC classes by share of revenue and XYZ classes by the coefficient of variation of weekly demand, with stocking advice for each combination; margins from an optional product cost price, snapshotted on every sale line.
 - **Printer supplies and after-hours printing** (`supplies.js`) — paper (sheets, duplex-aware) and toner (pages) remaining per printer since the last refill, with a run-out date from that printer's recent use. Print jobs outside the learned opening hours are flagged on their session and raised as a risk alert.
+- **Toner and ink levels** (`toner.js`) — the agent reads each cartridge's real level from network printers over SNMP (Printer MIB: black and C/M/Y, drums, waste toner). From the readings the server detects cartridge replacements automatically (a jump of 15+ points), learns pages per 1% for the current cartridge with a Theil-Sen fit of level against pages printed (colour cartridges against colour pages only), and forecasts pages and days left; it flags a cartridge emptying much faster than the last one. The printer's own page counter is compared with the pages the agent saw, revealing photocopies and prints that bypassed the PC. Shown on the dashboard and in Print monitor. Printers without SNMP fall back to the page-count estimate.
 - **Print session ↔ sale matching** (`matching.js`) — unbilled print sessions are paired with hand-rung print-service sales by minimum-cost bipartite matching (Hungarian algorithm) on page mismatch, timing and customer-name similarity, with a reject option so weak pairs aren't forced. Printed vs sold then lists "probably rung up by hand" (confirm to link) separately from "no matching sale found", the prints most likely never paid for. Days with print sales but no print data at all (agent not running) are shown but left out of the totals.
 - **Print monitoring with job analysis** — a Windows agent watches the print spooler and reports every finished job with the settings it was actually sent with (copies, colour, duplex, paper size, client PC). The server analyses each job (`server/lib/printAnalysis.js`):
   - **Pages actually printed** = pages × copies, plus sheets for duplex jobs.
@@ -152,8 +153,12 @@ receipt-system/
 │   ├── watch-print-jobs.ps1  WMI event watcher — emits JSON per detected job
 │   ├── agent.js               Node wrapper: batching, retry queue, heartbeat
 │   ├── docPages.js            Opt-in source document page counter (PDF/DOCX/PPTX)
+│   ├── snmp.js                Minimal SNMP client (Printer MIB: toner, page counter)
+│   ├── printerSupplies.js     Finds printer IPs and reports toner levels
+│   └── test/                  SNMP tests against a simulated printer
 │   ├── config.example.json
 │   └── README.md              Agent-specific setup & troubleshooting
+├── scripts/build-exe.js     Builds ReceiptSystem.exe + PrintMonitorAgent.exe (Node SEA)
 ├── windows/                 install.bat / start.bat / build.bat (standalone .exe, see WINDOWS-SETUP.md)
 ├── data/                    SQLite database lives here (created on first run)
 ├── package.json

@@ -17,15 +17,33 @@
 const { spawn } = require('child_process');
 const readline = require('readline');
 const { countDocumentPages } = require('./docPages');
+const { createSupplyPoller } = require('./printerSupplies');
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_PATH = process.env.AGENT_CONFIG || path.join(__dirname, 'config.json');
-const QUEUE_PATH = path.join(__dirname, 'queue.json');
+// Running as PrintMonitorAgent.exe (Node single-executable)? Then config.json
+// and queue.json live beside the .exe and the PowerShell watcher is embedded.
+function isSea() {
+  try { return require('node:sea').isSea(); } catch { return false; }
+}
+const STANDALONE = isSea();
+const BASE_DIR = STANDALONE ? path.dirname(process.execPath) : __dirname;
+const CONFIG_PATH = process.env.AGENT_CONFIG || path.join(BASE_DIR, 'config.json');
+const QUEUE_PATH = path.join(BASE_DIR, 'queue.json');
+
+function embeddedWatcherScript() {
+  const dir = path.join(require('os').tmpdir(), 'receipt-print-agent');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'watch-print-jobs.ps1');
+  fs.writeFileSync(file, Buffer.from(require('node:sea').getAsset('watch-print-jobs.ps1')));
+  return file;
+}
 
 if (!fs.existsSync(CONFIG_PATH)) {
   console.error(`Config file not found at ${CONFIG_PATH}.`);
   console.error('Copy config.example.json to config.json and fill in backendUrl + agentApiKey.');
+  // Double-clicked .exe: keep the window open long enough to read this.
+  if (STANDALONE) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15000);
   process.exit(1);
 }
 
@@ -36,7 +54,7 @@ const {
   printers = [],
   heartbeatIntervalMs = 60000,
   flushIntervalMs = 5000,
-  scriptPath = path.join(__dirname, 'watch-print-jobs.ps1'),
+  scriptPath = STANDALONE ? embeddedWatcherScript() : path.join(__dirname, 'watch-print-jobs.ps1'),
   printerColorOverride = {},
   printerDuplexAssumption = {},
   inspectDocuments = false
@@ -233,4 +251,6 @@ process.on('SIGTERM', () => { log('Shutting down.'); process.exit(0); });
 startWatcher();
 setInterval(flushQueue, flushIntervalMs);
 setInterval(heartbeat, heartbeatIntervalMs);
+// Toner / ink levels and the printer's own page counter, over SNMP.
+createSupplyPoller({ config, postJson, log }).start();
 log(`Print monitor agent started. Reporting to ${backendUrl}`);

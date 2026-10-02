@@ -6,23 +6,22 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "node server/server.js",
-    "build:win": "pkg . --targets node18-win-x64 --output dist/receipt-system.exe --compress GZip"
+    "build:exe": "node scripts/build-exe.js --target win-x64",
+    "build:exe:linux": "node scripts/build-exe.js --target linux-x64",
+    "test:agent": "node agent/test/snmp.test.js"
   },
-  "pkg": {
-    "scripts": [
-      "server/**/*.js"
-    ],
-    "assets": [
-      "public/**/*",
-      "node_modules/better-sqlite3/build/Release/*.node"
-    ],
-    "outputPath": "dist"
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-session": "^1.18.0",
-    "dotenv": "^16.4.5"
+    "express-session": "^1.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6"
   }
 }

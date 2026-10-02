@@ -129,6 +129,40 @@ router.post('/ingest', requireAgent, (req, res) => {
 });
 
 // ---------------------------------------------------------------
+// Agent-facing: toner / ink levels and the device page counter (SNMP).
+// ---------------------------------------------------------------
+router.post('/supplies', requireAgent, (req, res) => {
+  const readings = Array.isArray(req.body.readings) ? req.body.readings.slice(0, 50) : [];
+  const insertSupply = db.prepare(`
+    INSERT INTO supply_readings (agent_id, printer_name, supply_index, description, colorant, kind, receptacle, percent, some_remaining, read_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertCounter = db.prepare(`
+    INSERT INTO device_counters (agent_id, printer_name, model, address, life_count, read_at) VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  let stored = 0;
+  db.transaction(() => {
+    for (const r of readings) {
+      if (!r || !r.printer_name) continue;
+      const readAt = r.read_at && !Number.isNaN(Date.parse(r.read_at)) ? new Date(r.read_at).toISOString() : new Date().toISOString();
+      const printer = String(r.printer_name).slice(0, 200);
+      insertCounter.run(req.agent.id, printer, String(r.model || '').slice(0, 120), String(r.address || '').slice(0, 100),
+        Number.isFinite(r.life_count) ? Math.round(r.life_count) : null, readAt);
+      for (const s of Array.isArray(r.supplies) ? r.supplies.slice(0, 40) : []) {
+        const pct = Number.isFinite(s.percent) ? Math.max(0, Math.min(100, s.percent)) : null;
+        insertSupply.run(req.agent.id, printer, String(s.index || '').slice(0, 40), String(s.description || '').slice(0, 120),
+          String(s.colorant || '').slice(0, 40), String(s.kind || 'other').slice(0, 30), s.receptacle ? 1 : 0, pct, s.some_remaining ? 1 : 0, readAt);
+        stored++;
+      }
+    }
+    // Keep 180 days of readings.
+    db.prepare("DELETE FROM supply_readings WHERE read_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-180 days')").run();
+    db.prepare("DELETE FROM device_counters WHERE read_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-180 days')").run();
+  })();
+  res.json({ ok: true, stored });
+});
+
+// ---------------------------------------------------------------
 // Admin-facing: the log itself
 // ---------------------------------------------------------------
 router.get('/', requireAdmin, (req, res) => {

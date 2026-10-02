@@ -215,6 +215,17 @@ function offHoursPrinting(since) {
   }];
 }
 
+function devicePageGaps() {
+  const { tonerStatus } = require('./toner');
+  return tonerStatus().filter((p) => p.device_gap && p.device_gap.significant).map((p) => ({
+    type: 'device_gap',
+    severity: p.device_gap.gap >= 100 ? 'high' : 'medium',
+    title: `${p.printer}: ${p.device_gap.gap} pages not seen by the agent`,
+    detail: `The printer's own counter went up by ${p.device_gap.device_pages} pages in the last 24 hours, but print jobs account for ${p.device_gap.reported_pages}. The difference is usually photocopies or printing that bypassed this PC.`,
+    metric: p.device_gap
+  }));
+}
+
 function riskAlerts(reconcile, now = new Date()) {
   const today = localDateString(now);
   const since = addDays(today, -30);
@@ -224,7 +235,8 @@ function riskAlerts(reconcile, now = new Date()) {
     ...printGapAnomalies(today, reconcile),
     ...cashDrawerAlerts(),
     ...lateVoids(since),
-    ...offHoursPrinting(since)
+    ...offHoursPrinting(since),
+    ...devicePageGaps()
   ];
   const rank = { high: 0, medium: 1 };
   alerts.sort((a, b) => rank[a.severity] - rank[b.severity]);

@@ -296,6 +296,15 @@ td .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wra
 .meter.low > div { background: #C2620A; }
 .meter.empty > div { background: var(--danger); }
 
+/* ---------- Toner ---------- */
+.toner-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.toner-printer { display: flex; flex-direction: column; gap: 10px; }
+.toner-row { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.toner-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15); }
+.toner-bar { height: 10px; border-radius: 5px; background: var(--line-soft); overflow: hidden; margin-top: 4px; }
+.toner-bar > div { height: 100%; border-radius: 5px; }
+.toner-bar.unknown > div { background: repeating-linear-gradient(135deg, var(--input-line) 0 4px, transparent 4px 8px); width: 100% !important; }
+
 /* ---------- Print sessions ---------- */
 .session { display: flex; flex-direction: column; gap: 12px; }
 .session-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }

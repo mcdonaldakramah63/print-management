@@ -56,6 +56,23 @@ and cross-check it against what was rung up in Sales History.
    the app — the job should appear in the print job log as "Unreviewed"
    within a few seconds of it finishing.
 
+## Toner and ink levels
+
+Every 15 minutes the agent asks this PC's **network** printers for their
+supply levels over SNMP (the standard Printer MIB), and their own page
+counter. It finds each printer's IP address from its Windows printer port
+(Standard TCP/IP ports). For printers it can't map (WSD ports, shared
+printers), add them to `config.json`:
+
+```json
+"printerAddresses": { "HP Color LaserJet": "192.168.1.50" }
+```
+
+SNMP must be enabled on the printer (it usually is, with community
+`public`; change `snmpCommunity` if yours differs). USB printers don't
+report levels; the app then estimates toner from pages printed. Set
+`"readSupplies": false` to turn this off.
+
 ## Optional: counting the whole document's pages
 
 Windows only tells the agent how many pages were *printed*, not how long the

@@ -1,10 +1,10 @@
 const path = require('path');
 const bcrypt = require('bcryptjs');
-const Database = require('better-sqlite3');
+const { openDatabase, isSea } = require('./lib/sqlite');
 
-// When running as a pkg-built .exe, __dirname is inside the read-only
-// snapshot, so the database must live in a writable folder beside the .exe.
-const PKG_ROOT = process.pkg
+// When running as the standalone .exe, the database lives in a writable
+// "data" folder beside the .exe.
+const PKG_ROOT = process.pkg || isSea()
   ? path.dirname(process.execPath)
   : path.join(__dirname, '..');
 
@@ -15,7 +15,7 @@ const fs = require('fs');
 const dataDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(DB_PATH);
+const db = openDatabase(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -226,6 +226,34 @@ CREATE TABLE IF NOT EXISTS supply_refills (
   refilled_at   TEXT NOT NULL DEFAULT (datetime('now')),
   refilled_by   INTEGER REFERENCES users(id)
 );
+`);
+
+// Toner / ink levels and device page counters read from printers over SNMP.
+db.exec(`
+CREATE TABLE IF NOT EXISTS supply_readings (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id       INTEGER NOT NULL REFERENCES agents(id),
+  printer_name   TEXT NOT NULL,
+  supply_index   TEXT NOT NULL,
+  description    TEXT NOT NULL DEFAULT '',
+  colorant       TEXT NOT NULL DEFAULT '',
+  kind           TEXT NOT NULL DEFAULT 'other',
+  receptacle     INTEGER NOT NULL DEFAULT 0,
+  percent        REAL,
+  some_remaining INTEGER NOT NULL DEFAULT 0,
+  read_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_supply_readings ON supply_readings(printer_name, supply_index, read_at);
+CREATE TABLE IF NOT EXISTS device_counters (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id      INTEGER NOT NULL REFERENCES agents(id),
+  printer_name  TEXT NOT NULL,
+  model         TEXT NOT NULL DEFAULT '',
+  address       TEXT NOT NULL DEFAULT '',
+  life_count    INTEGER,
+  read_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_device_counters ON device_counters(printer_name, read_at);
 `);
 
 // Reorder planning: supplier lead time and how many days an order should cover.

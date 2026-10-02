@@ -62,15 +62,33 @@ IP address instead, e.g. `http://192.168.1.20:3000` (find yours with
 prompt you to allow Node.js through on first run — allow it for private
 networks.
 
-## Optional: building a standalone `.exe`
+## The standalone Windows app (no Node.js needed)
 
-To hand someone a single `.exe` that doesn't require installing Node.js,
-double-click **`windows\build.bat`** on a Windows PC with Node.js and
-internet access (or run `npm run build:win`). It installs dependencies,
-installs [`pkg`](https://github.com/vercel/pkg) if needed, and produces
-`dist\receipt-system.exe` plus a `dist\public` folder and a `dist\.env`.
+`ReceiptSystem.exe` is the whole system in one file: the server, the web
+pages and the database engine. Double-click it, and a console window opens
+along with your browser at `http://localhost:3000`. Keep the window open
+while you work. Your data is kept in a `data` folder next to the `.exe`;
+back that folder up. Windows may show a SmartScreen warning the first time,
+because the app isn't code-signed: choose **More info → Run anyway**.
 
-Copy the whole `dist\` folder to distribute it — the `.exe`, `public\` and
-`.env` must stay together. The database is created in `dist\data\` beside
-the `.exe` on first run. Set a real `SESSION_SECRET` in `dist\.env` before
-real use.
+`PrintMonitorAgent.exe` is the print agent as a single file for PCs with a
+printer: put `config.json` (from `agent-config.example.json`) next to it.
+
+### Getting the .exe
+
+- **Download it:** every push builds and tests the Windows app on GitHub
+  Actions ("Windows app" workflow). Open the latest run and download the
+  `ReceiptSystem-win-x64` artifact (a zip).
+- **Build it yourself on Windows:** install Node.js 22.13+ and double-click
+  `windows\build.bat`, or run `npm install` then `npm run build:exe`.
+- **Build it on Linux/macOS:** `npm install && npm run build:exe`
+  cross-builds the Windows `.exe` (it downloads the matching Windows Node
+  runtime from nodejs.org).
+
+The result is `dist\ReceiptSystem-win-x64\` and a `.zip` of it, with both
+`.exe` files, `agent-config.example.json`, `.env.example` and a README.
+
+How it works: the apps are Node.js single-executable applications. The code
+is bundled with esbuild and injected into a copy of the official `node.exe`
+(see `scripts/build-exe.js`). Inside the `.exe` the database uses Node's
+built-in SQLite, so there is no native add-on to install.

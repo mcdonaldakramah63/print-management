@@ -9,6 +9,7 @@ const { customersCached, lookup } = require('../lib/insights/customers');
 const { trafficAnalysis } = require('../lib/insights/traffic');
 const { productMix } = require('../lib/insights/productMix');
 const { suppliesStatus, recordRefill } = require('../lib/insights/supplies');
+const { tonerStatus } = require('../lib/insights/toner');
 
 const router = express.Router();
 
@@ -55,7 +56,12 @@ router.get('/product-mix', requireAdmin, (req, res) => {
 });
 
 router.get('/supplies', requireAdmin, (req, res) => {
-  res.json({ printers: suppliesStatus() });
+  res.json({ printers: suppliesStatus(), measured: tonerStatus() });
+});
+
+// Measured toner / ink levels (SNMP) with learned pages-per-percent forecasts.
+router.get('/toner', requireAdmin, (req, res) => {
+  res.json({ printers: tonerStatus() });
 });
 
 router.post('/supplies/refill', requireAdmin, (req, res) => {
@@ -65,7 +71,7 @@ router.post('/supplies/refill', requireAdmin, (req, res) => {
   if (!printer || !['paper', 'toner'].includes(kind)) return res.status(400).json({ error: 'Printer and supply type (paper or toner) are required' });
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 1000000) return res.status(400).json({ error: 'Capacity must be a whole number of sheets or pages' });
   recordRefill(printer, kind, capacity, req.session.user.id);
-  res.json({ ok: true, printers: suppliesStatus() });
+  res.json({ ok: true, printers: suppliesStatus(), measured: tonerStatus() });
 });
 
 module.exports = router;

@@ -272,6 +272,12 @@ async function loadDashboard() {
     api('GET', '/api/insights/stock').catch(() => ({ products: [] })),
     isAdmin() ? api('GET', '/api/insights/risk').catch(() => ({ alerts: [] })) : Promise.resolve(null)
   ]);
+  if (isAdmin()) {
+    api('GET', '/api/insights/toner').then(({ printers }) => {
+      $('toner-card').hidden = printers.length === 0;
+      $('toner-dash').innerHTML = printers.map((p) => tonerPrinterHtml(p, true)).join('');
+    }).catch(() => {});
+  }
   $('dash-closed').hidden = !data.closedToday;
 
   const pace = forecast && forecast.today;
@@ -1485,15 +1491,64 @@ function setupSupplies() {
   });
 }
 
+let measuredToner = [];
+
 async function loadSupplies() {
-  ({ printers: suppliesData } = await api('GET', '/api/insights/supplies'));
+  ({ printers: suppliesData, measured: measuredToner } = await api('GET', '/api/insights/supplies'));
   renderSupplies();
 }
 
+const COLORANT = { black: '#16181D', cyan: '#00A3D9', magenta: '#D6007E', yellow: '#F2C200' };
+const TONER_STATUS = { replace_now: ['Replace now', 'danger'], low: ['Low', 'warn'], unknown: ['Not reported', ''] };
+
+function ago(iso) {
+  const min = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+}
+
+function tonerPrinterHtml(p, compact) {
+  const supplies = compact ? p.supplies.filter((s) => !s.receptacle && /toner|ink/.test(s.kind)) : p.supplies;
+  const rows = supplies.map((s) => {
+    const colour = COLORANT[s.colorant] || (s.receptacle ? '#9EA29A' : '#C9CCC4');
+    const [label, cls] = TONER_STATUS[s.status] || [];
+    const forecast = s.receptacle ? (s.status === 'ok' ? '' : 'Nearly full: replace soon')
+      : [s.pages_left !== null ? `~${s.pages_left.toLocaleString()} pages` : '', s.days_left !== null ? `~${s.days_left < 1 ? 'under a day' : plural(Math.round(s.days_left), 'day')}` : '']
+        .filter(Boolean).join(' · ');
+    const how = s.method === 'pages' ? `Learned: ~${s.pages_per_percent} pages per 1%${s.previous_yield ? `; last cartridge gave ~${s.previous_yield.toLocaleString()} pages` : ''}`
+      : s.method === 'time' ? 'Forecast from how fast the level has dropped (few pages since the change)'
+      : s.method === 'learning' ? 'Still learning this cartridge' : '';
+    const barColour = s.status === 'replace_now' ? 'var(--danger)' : s.status === 'low' ? '#C2620A' : colour;
+    return `<div class="toner-row">
+      <span class="toner-dot" style="background:${colour}" aria-hidden="true"></span>
+      <div style="min-width:0;">
+        <div class="spread small"><span>${escapeHtml(s.description || s.colorant || s.kind)}</span><span class="mono">${s.percent === null ? (s.some_remaining ? 'some left' : '?') : s.receptacle ? `${Math.round(100 - s.percent)}% full` : `${Math.round(s.percent)}%`}</span></div>
+        <div class="toner-bar ${s.percent === null ? 'unknown' : ''}" role="img" aria-label="${escapeHtml(s.description)} ${s.percent === null ? 'level not reported' : s.receptacle ? Math.round(100 - s.percent) + '% full' : Math.round(s.percent) + '%'}"><div style="width:${s.percent === null ? 0 : s.receptacle ? 100 - s.percent : s.percent}%; background:${barColour};"></div></div>
+        ${!compact && (forecast || how) ? `<div class="muted small" title="${escapeHtml(how)}">${escapeHtml(forecast)}${forecast && how ? ' · ' : ''}${escapeHtml(how)}</div>` : compact && forecast ? `<div class="muted small">${escapeHtml(forecast)}</div>` : ''}
+        ${!compact && s.replaced_at ? `<div class="muted small">New cartridge detected ${escapeHtml(formatDbDate(s.replaced_at))}</div>` : ''}
+        ${!compact ? s.notes.map((n) => `<div class="small" style="color:var(--warn-ink);">${escapeHtml(n)}</div>`).join('') : ''}
+      </div>
+      ${label ? `<span class="badge ${cls}">${label}</span>` : '<span></span>'}
+    </div>`;
+  }).join('');
+  const gap = p.device_gap && p.device_gap.significant
+    ? `<div class="callout" style="padding:8px 12px;"><strong class="small">${p.device_gap.gap} pages not seen by the agent (24 h)</strong><span class="small">Printer counter +${p.device_gap.device_pages}, print jobs ${p.device_gap.reported_pages}. Usually photocopies or printing that bypassed this PC.</span></div>` : '';
+  return `<div class="toner-printer">
+    <div><strong>${escapeHtml(p.printer)}</strong>${p.model ? ` <span class="muted small">${escapeHtml(p.model)}</span>` : ''}
+      <div class="muted small">${p.read_at ? `Read ${ago(p.read_at)}` : ''}${p.stale ? ' · <span style="color:var(--warn-ink)">not updated recently</span>' : ''}${!compact && p.life_count !== null ? ` · counter ${p.life_count.toLocaleString()} pages` : ''}</div></div>
+    ${rows || '<p class="muted small" style="margin:0;">No toner reported.</p>'}
+    ${gap}
+  </div>`;
+}
+
 function renderSupplies() {
-  $('supplies-wrap').innerHTML = suppliesData.length === 0 ? '<p class="muted" style="margin:0;">Printers appear here once an agent reports jobs.</p>'
-    : suppliesData.map((p) => `<div class="supply"><strong>${escapeHtml(p.printer)}</strong>${p.supplies.map((s) => {
-      const label = s.kind === 'paper' ? 'Paper' : 'Toner';
+  const measured = new Map((measuredToner || []).map((m) => [m.printer, m]));
+  $('supplies-wrap').innerHTML = suppliesData.length === 0 && measured.size === 0 ? '<p class="muted" style="margin:0;">Printers appear here once an agent reports jobs.</p>'
+    : [...measured.values()].filter((m) => !suppliesData.some((p) => p.printer === m.printer)).map((m) => `<div class="supply">${tonerPrinterHtml(m, false)}</div>`).join('') +
+    suppliesData.map((p) => `<div class="supply">${measured.has(p.printer) ? tonerPrinterHtml(measured.get(p.printer), false) : `<strong>${escapeHtml(p.printer)}</strong>`}${p.supplies.filter((s) => !(s.kind === 'toner' && measured.has(p.printer))).map((s) => {
+      const label = s.kind === 'paper' ? 'Paper' : 'Toner (estimated from pages)';
       if (!s.tracked) {
         return `<div class="spread small"><span>${label}: not tracked${s.daily_use ? ` · uses ~${s.daily_use}/day` : ''}</span><button type="button" class="btn btn-ghost btn-sm" data-refill="${s.kind}" data-printer="${escapeHtml(p.printer)}">Start tracking</button></div>`;
       }
