@@ -62,13 +62,15 @@ IP address instead, e.g. `http://192.168.1.20:3000` (find yours with
 prompt you to allow Node.js through on first run — allow it for private
 networks.
 
-## Optional: building a real standalone `.exe`
+## Optional: building a standalone `.exe`
 
-If you'd rather hand someone a single `.exe` that doesn't require installing
-Node.js separately, the standard approach is
-[`pkg`](https://github.com/vercel/pkg) or
-[`electron-builder`](https://www.electron.build/). Both need network access
-to download the target platform's Node runtime/binaries during the build, so
-you'd run the build step yourself (e.g. `npx pkg . --targets node18-win-x64`
-from the project root) rather than it being something baked into this zip.
-Happy to walk through that with you if you want to go there later.
+To hand someone a single `.exe` that doesn't require installing Node.js,
+double-click **`windows\build.bat`** on a Windows PC with Node.js and
+internet access (or run `npm run build:win`). It installs dependencies,
+installs [`pkg`](https://github.com/vercel/pkg) if needed, and produces
+`dist\receipt-system.exe` plus a `dist\public` folder and a `dist\.env`.
+
+Copy the whole `dist\` folder to distribute it — the `.exe`, `public\` and
+`.env` must stay together. The database is created in `dist\data\` beside
+the `.exe` on first run. Set a real `SESSION_SECRET` in `dist\.env` before
+real use.

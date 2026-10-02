@@ -1,5 +1,13 @@
-require('dotenv').config();
 const path = require('path');
+
+// When running as a pkg-built .exe, __dirname points into the read-only
+// virtual snapshot. PKG_ROOT is the folder containing the .exe instead, which
+// is where .env and public/ live. For `node server/server.js` it's the project root.
+const PKG_ROOT = process.pkg
+  ? path.dirname(process.execPath)
+  : path.join(__dirname, '..');
+
+require('dotenv').config({ path: path.join(PKG_ROOT, '.env') });
 const express = require('express');
 const session = require('express-session');
 
@@ -45,7 +53,7 @@ app.use('/api/print-jobs', printJobRoutes);
 
 app.get('/', (req, res) => res.redirect('/login.html'));
 
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(express.static(path.join(PKG_ROOT, 'public')));
 
 // Unknown API routes and unexpected errors answer in JSON, which is what the
 // frontend's api() helper expects to read an error message from.

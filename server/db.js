@@ -2,7 +2,13 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'receipts.db');
+// When running as a pkg-built .exe, __dirname is inside the read-only
+// snapshot, so the database must live in a writable folder beside the .exe.
+const PKG_ROOT = process.pkg
+  ? path.dirname(process.execPath)
+  : path.join(__dirname, '..');
+
+const DB_PATH = path.join(PKG_ROOT, 'data', 'receipts.db');
 
 // Ensure the data folder exists
 const fs = require('fs');

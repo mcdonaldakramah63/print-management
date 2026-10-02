@@ -91,7 +91,10 @@ receipt-system/
 ├── server/
 │   ├── server.js          Express app entry point
 │   ├── db.js               SQLite schema + seed data
-│   ├── middleware/auth.js  Session auth guards
+│   ├── middleware/
+│   │   ├── auth.js         Session auth guards
+│   │   └── agentAuth.js    Print agent API-key auth
+│   ├── lib/saleCreator.js  Sale creation, totals, receipt numbers
 │   └── routes/
 │       ├── auth.js         Login, logout, change password
 │       ├── users.js        User management (admin)
@@ -117,6 +120,7 @@ receipt-system/
 │   ├── agent.js               Node wrapper: batching, retry queue, heartbeat
 │   ├── config.example.json
 │   └── README.md              Agent-specific setup & troubleshooting
+├── windows/                 install.bat / start.bat / build.bat (standalone .exe, see WINDOWS-SETUP.md)
 ├── data/                    SQLite database lives here (created on first run)
 ├── package.json
 └── .env.example
