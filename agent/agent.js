@@ -107,8 +107,15 @@ function enqueue(job) {
   log(`Detected: "${job.document_name || '(untitled)'}" on ${job.printer_name} (queue: ${queue.length})`);
 }
 
+// setInterval keeps firing while a slow request (or a backoff sleep) is in
+// progress. Without this guard two flushes could send the same batch and
+// then each drop `batch.length` jobs from the front of the queue — silently
+// discarding jobs that were never sent.
+let flushing = false;
+
 async function flushQueue() {
-  if (queue.length === 0) return;
+  if (flushing || queue.length === 0) return;
+  flushing = true;
   const batch = queue.slice(0, 100);
 
   try {
@@ -130,6 +137,8 @@ async function flushQueue() {
     log(`Ingest failed: ${err.message} — will retry (queue: ${queue.length}).`);
     await sleep(backoffMs);
     backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+  } finally {
+    flushing = false;
   }
 }
 

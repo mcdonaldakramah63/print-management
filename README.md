@@ -46,8 +46,6 @@ password: admin123   (or whatever DEFAULT_ADMIN_PASSWORD you set in .env)
 
 **Log in immediately and change this password** from *My Account*, or via *Users → Reset password* for a fresh one.
 
-> Note: I built and syntax-checked all the files, but couldn't run `npm install` or a live end-to-end test in this environment — outbound network access here is disabled. Run the steps above on your own machine and let me know if you hit anything odd; happy to debug.
-
 ## Using it
 
 1. **Settings** (admin) — fill in your business name, address, phone, tax rate, currency, and optionally upload a small logo.

@@ -22,8 +22,8 @@ router.get('/', requireAdmin, (req, res) => {
 // Register a new agent. The raw API key is returned ONCE here and never again —
 // store it in the agent's config when you set it up on the shop PC.
 router.post('/', requireAdmin, (req, res) => {
-  const { label } = req.body;
-  if (!label || !label.trim()) {
+  const label = typeof req.body.label === 'string' ? req.body.label : '';
+  if (!label.trim()) {
     return res.status(400).json({ error: 'A label for this agent/PC is required' });
   }
 
@@ -36,7 +36,8 @@ router.post('/', requireAdmin, (req, res) => {
 });
 
 router.patch('/:id/active', requireAdmin, (req, res) => {
-  db.prepare('UPDATE agents SET active = ? WHERE id = ?').run(req.body.active ? 1 : 0, req.params.id);
+  const info = db.prepare('UPDATE agents SET active = ? WHERE id = ?').run(req.body.active ? 1 : 0, req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Agent not found' });
   res.json({ ok: true });
 });
 

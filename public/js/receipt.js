@@ -41,7 +41,7 @@
   root.innerHTML = `
     <div class="r-header">
       <div class="r-business">
-        ${settings.logo_data_url ? `<img class="r-logo" src="${settings.logo_data_url}" alt="Logo">` : ''}
+        ${settings.logo_data_url ? `<img class="r-logo" src="${escapeHtml(settings.logo_data_url)}" alt="Logo">` : ''}
         <div>
           <h1>${escapeHtml(settings.business_name)}</h1>
           <div class="meta">
@@ -53,7 +53,7 @@
       <div class="r-doc-label">
         <div class="type">SALES RECEIPT</div>
         <div class="no">No. ${escapeHtml(sale.receipt_no)}</div>
-        <div class="date">${new Date(sale.created_at).toLocaleString()}</div>
+        <div class="date">${formatDbDate(sale.created_at)}</div>
         ${sale.voided ? '<div class="r-voided-stamp">VOID</div>' : ''}
       </div>
     </div>
@@ -94,8 +94,11 @@
     </div>
   `;
 
-  document.getElementById('print-btn').addEventListener('click', () => window.print());
-  document.getElementById('back-btn').addEventListener('click', () => {
-    window.location.href = 'app.html#history';
-  });
 })();
+
+// Wired up outside the async loader so the buttons still work when the
+// receipt fails to load (e.g. a bad id) instead of leaving the page stuck.
+document.getElementById('print-btn').addEventListener('click', () => window.print());
+document.getElementById('back-btn').addEventListener('click', () => {
+  window.location.href = 'app.html#history';
+});

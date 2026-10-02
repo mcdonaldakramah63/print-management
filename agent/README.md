@@ -5,11 +5,9 @@ spooler and reports each finished job's **metadata** (document name, final
 page count, color/mono mode, submitting Windows user, printer, timestamp) to
 the receipt system. **It never reads the contents of what's printed.**
 
-If the app has an active print-service product matching the job's detected
-color mode (see *Auto-billing* in the main `README.md`), a sale is created
-automatically — that's the anti-theft point of this whole feature: a print
-job either gets billed the instant it finishes, or it lands in an admin
-review queue, but it's never simply invisible.
+Reported jobs are a log only — they never create or change a sale. Admins
+use the **Print Monitoring** page to see what was actually printed each day
+and cross-check it against what was rung up in Sales History.
 
 ## How it works
 
@@ -48,8 +46,8 @@ review queue, but it's never simply invisible.
    node agent.js
    ```
    Print something on the PC, then check the **Print Monitoring** page in
-   the app — the job should appear as "Pending review" within a couple of
-   seconds.
+   the app — the job should appear in the print job log as "Unreviewed"
+   within a few seconds of it finishing.
 
 ## Running it automatically (Task Scheduler)
 
@@ -124,10 +122,7 @@ if you want the extra robustness.
 - **"Agent key looks invalid or revoked"** in the log — re-check
   `agentApiKey` in `config.json`, or the agent may have been disabled from
   the Print Monitoring admin page.
-- **A job billed for 0 pages, or didn't auto-bill despite a clear match** —
-  the agent reports `PagesPrinted` if available, otherwise `TotalPages`;
-  some drivers don't populate either reliably. Jobs with no usable page
-  count are always left as drafts rather than auto-billed with a guessed
-  page count — you'll need to enter the page count manually when approving.
+- **A job shows 0 pages** — the agent reports `PagesPrinted` if available,
+  otherwise `TotalPages`; some drivers don't populate either reliably.
 - **Firewall** — this agent only makes outbound HTTPS requests to
   `backendUrl`; it doesn't need to accept any inbound connections.

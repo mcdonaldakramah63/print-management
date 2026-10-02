@@ -3,6 +3,7 @@ let currentSettings = null;
 let itemIdCounter = 0;
 let products = [];
 let editingProductId = null;
+let currentView = null;
 
 // ---------------------------------------------------------------
 // Bootstrap
@@ -40,6 +41,12 @@ let editingProductId = null;
 
   addItemRow();
   navigateTo(location.hash.replace('#', '') || 'dashboard');
+
+  // Keep the browser's back/forward buttons working between views.
+  window.addEventListener('hashchange', () => {
+    const view = location.hash.replace('#', '');
+    if (view && view !== currentView) navigateTo(view);
+  });
 })();
 
 async function loadProductCatalog() {
@@ -76,6 +83,7 @@ function navigateTo(view) {
   document.getElementById(`view-${view}`).classList.add('active');
   const link = document.querySelector(`.nav-link[data-view="${view}"]`);
   if (link) link.classList.add('active');
+  currentView = view;
   location.hash = view;
 
   if (view === 'dashboard') loadDashboard();
@@ -268,7 +276,8 @@ function recalcTotals() {
   const items = getSaleItems();
   let subtotal = 0;
   items.forEach((item) => {
-    const lineTotal = item.qty * item.unit_price;
+    // Round each line the same way the server does, so the preview matches the receipt.
+    const lineTotal = Math.round(item.qty * item.unit_price * 100) / 100;
     subtotal += lineTotal;
     item.row.querySelector('.item-line-total').value = lineTotal.toFixed(2);
   });
@@ -307,12 +316,20 @@ async function submitSale(e) {
     discount_value: parseFloat(document.getElementById('discount-value').value) || 0
   };
 
+  // Open the receipt tab now, while we're still inside the click/submit
+  // handler: browsers block window.open() calls made after an await as
+  // unsolicited pop-ups.
+  const receiptWin = window.open('', '_blank');
+
   try {
     const result = await api('POST', '/api/sales', payload);
     resetSaleForm();
+    const receiptUrl = `receipt.html?id=${result.id}`;
+    if (receiptWin) receiptWin.location.href = receiptUrl;
+    else window.location.href = receiptUrl;
     await loadProductCatalog(); // stock levels changed
-    window.open(`receipt.html?id=${result.id}`, '_blank');
   } catch (err) {
+    if (receiptWin) receiptWin.close();
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
   }
@@ -355,8 +372,8 @@ async function loadHistory() {
   const rows = sales.map((s) => `
     <tr>
       <td>${escapeHtml(s.receipt_no)}</td>
-      <td>${new Date(s.created_at).toLocaleString()}</td>
-      <td>${escapeHtml(s.customer_name || '&mdash;')}</td>
+      <td>${formatDbDate(s.created_at)}</td>
+      <td>${s.customer_name ? escapeHtml(s.customer_name) : '&mdash;'}</td>
       <td>${escapeHtml(s.cashier_name)}</td>
       <td class="num">${money(s.total, currentSettings.currency)}</td>
       <td>${s.voided ? '<span class="badge danger">Voided</span>' : '<span class="badge">Completed</span>'}</td>
@@ -377,7 +394,12 @@ async function loadHistory() {
   wrap.querySelectorAll('.void-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!confirm('Void this sale? It will stay in history but be marked as voided.')) return;
-      await api('PATCH', `/api/sales/${btn.dataset.id}/void`);
+      try {
+        await api('PATCH', `/api/sales/${btn.dataset.id}/void`);
+      } catch (err) {
+        alert(err.message);
+      }
+      await loadProductCatalog(); // voiding returns stock
       loadHistory();
     });
   });
@@ -481,7 +503,6 @@ function setupProductForm() {
 
     try {
       if (editingProductId) {
-        payload.active = true;
         await api('PUT', `/api/products/${editingProductId}`, payload);
       } else {
         await api('POST', '/api/products', payload);
@@ -518,7 +539,7 @@ async function loadProducts() {
   const rows = list.map((p) => `
     <tr>
       <td>${escapeHtml(p.name)}${p.sku ? `<div class="muted" style="font-size:11.5px;">${escapeHtml(p.sku)}</div>` : ''}</td>
-      <td>${escapeHtml(p.category || '&mdash;')}</td>
+      <td>${p.category ? escapeHtml(p.category) : '&mdash;'}</td>
       <td class="num">${money(p.price, currentSettings.currency)}</td>
       <td class="num">${p.track_stock ? p.stock_qty : '&mdash;'}</td>
       <td>${p.active ? '<span class="badge">Active</span>' : '<span class="badge danger">Inactive</span>'}</td>
@@ -613,7 +634,7 @@ function setupPrintMonitor() {
   document.getElementById('pj-bulk-flag').addEventListener('click', () => bulkUpdatePrintJobs('flag'));
 
   const summaryDate = document.getElementById('summary-date');
-  summaryDate.valueAsDate = new Date();
+  summaryDate.value = localDateString();
   summaryDate.addEventListener('change', loadPrintSummary);
 }
 
@@ -628,7 +649,7 @@ async function loadAgents() {
     <tr>
       <td>${escapeHtml(a.label)}</td>
       <td>${a.online ? '<span class="badge">Online</span>' : '<span class="badge danger">Offline</span>'}</td>
-      <td>${a.last_seen_at ? new Date(a.last_seen_at + 'Z').toLocaleString() : 'Never'}</td>
+      <td>${a.last_seen_at ? formatDbDate(a.last_seen_at) : 'Never'}</td>
       <td>${a.active ? '<span class="badge">Active</span>' : '<span class="badge danger">Disabled</span>'}</td>
       <td><button class="btn btn-outline btn-sm toggle-agent" data-id="${a.id}" data-active="${a.active}">${a.active ? 'Disable' : 'Enable'}</button></td>
     </tr>
@@ -649,7 +670,7 @@ async function loadAgents() {
 }
 
 async function loadPrintSummary() {
-  const date = document.getElementById('summary-date').value || new Date().toISOString().slice(0, 10);
+  const date = document.getElementById('summary-date').value || localDateString();
   const { totals, byPrinter } = await api('GET', `/api/print-jobs/summary?date=${date}`);
 
   const grid = document.getElementById('summary-kpi-grid');
@@ -712,7 +733,7 @@ async function loadPrintJobs() {
       <td>${escapeHtml(j.document_name) || '<span class="muted">(untitled)</span>'}</td>
       <td>${escapeHtml(j.printer_name)}<div class="muted" style="font-size:11px;">${escapeHtml(j.agent_label)}</div></td>
       <td>${escapeHtml(j.submitted_by) || '&mdash;'}</td>
-      <td class="num">${j.pages || '<span class="muted">?</span>'}</td>
+      <td class="num">${j.pages != null ? j.pages : '<span class="muted">?</span>'}</td>
       <td>${colorModeBadge(j.color_mode)} ${duplexBadge(j.duplex)}</td>
       <td>${new Date(j.submitted_at).toLocaleString()}</td>
       <td>${statusCell(j)}</td>
@@ -763,7 +784,8 @@ async function bulkUpdatePrintJobs(action) {
   if (action === 'review') {
     await api('PATCH', '/api/print-jobs/bulk-review', { ids });
   } else {
-    const note = prompt(`Optional note for flagging these ${ids.length} job(s):`) || '';
+    const note = prompt(`Optional note for flagging these ${ids.length} job(s):`);
+    if (note === null) return; // cancelled
     await api('PATCH', '/api/print-jobs/bulk-flag', { ids, note });
   }
   loadPrintJobs();

@@ -19,6 +19,10 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '5mb' })); // 5mb to allow a small base64 logo
 
+if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === 'change-this-secret-in-production') {
+  console.warn('WARNING: SESSION_SECRET is not set to a unique value in .env - set one before real use.');
+}
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'change-this-secret-in-production',
   resave: false,
@@ -42,6 +46,16 @@ app.use('/api/print-jobs', printJobRoutes);
 app.get('/', (req, res) => res.redirect('/login.html'));
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Unknown API routes and unexpected errors answer in JSON, which is what the
+// frontend's api() helper expects to read an error message from.
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) console.error(err);
+  res.status(status).json({ error: status >= 500 ? 'Internal server error' : err.message });
+});
 
 app.listen(PORT, () => {
   console.log(`Receipt system running at http://localhost:${PORT}`);

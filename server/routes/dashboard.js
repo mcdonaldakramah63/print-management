@@ -4,27 +4,35 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
+// sales.created_at is stored in UTC (datetime('now')), so every date
+// comparison converts it to local time first — otherwise sales made in the
+// hours around midnight land on the wrong day.
+function localDayKey(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 router.get('/summary', requireAuth, (req, res) => {
   const today = db.prepare(`
     SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS count
-    FROM sales WHERE voided = 0 AND date(created_at) = date('now','localtime')
+    FROM sales WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime')
   `).get();
 
   const last7Days = db.prepare(`
     SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS count
-    FROM sales WHERE voided = 0 AND date(created_at) >= date('now','-6 days','localtime')
+    FROM sales WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-6 days')
   `).get();
 
   const thisMonth = db.prepare(`
     SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS count
-    FROM sales WHERE voided = 0 AND strftime('%Y-%m', created_at) = strftime('%Y-%m','now','localtime')
+    FROM sales WHERE voided = 0 AND strftime('%Y-%m', created_at,'localtime') = strftime('%Y-%m','now','localtime')
   `).get();
 
   // Daily revenue for the last 14 days, filled in so days with no sales still show as 0
   const rawSeries = db.prepare(`
-    SELECT date(created_at) AS day, SUM(total) AS revenue
+    SELECT date(created_at,'localtime') AS day, SUM(total) AS revenue
     FROM sales
-    WHERE voided = 0 AND date(created_at) >= date('now','-13 days','localtime')
+    WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-13 days')
     GROUP BY day
   `).all();
   const seriesMap = Object.fromEntries(rawSeries.map((r) => [r.day, r.revenue]));
@@ -32,7 +40,7 @@ router.get('/summary', requireAuth, (req, res) => {
   for (let i = 13; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
+    const key = localDayKey(d);
     dailySeries.push({ day: key, revenue: seriesMap[key] || 0 });
   }
 
@@ -40,7 +48,7 @@ router.get('/summary', requireAuth, (req, res) => {
     SELECT si.name, SUM(si.qty) AS qty, SUM(si.line_total) AS revenue
     FROM sale_items si
     JOIN sales s ON s.id = si.sale_id
-    WHERE s.voided = 0 AND date(s.created_at) >= date('now','-29 days','localtime')
+    WHERE s.voided = 0 AND date(s.created_at,'localtime') >= date('now','localtime','-29 days')
     GROUP BY si.name
     ORDER BY revenue DESC
     LIMIT 5

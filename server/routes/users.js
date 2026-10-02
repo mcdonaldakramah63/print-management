@@ -15,8 +15,10 @@ router.get('/', requireAdmin, (req, res) => {
 
 // Create a new user (admin only)
 router.post('/', requireAdmin, (req, res) => {
-  const { username, password, full_name, role } = req.body;
-  if (!username || !password || !full_name || !role) {
+  const { password, role } = req.body;
+  const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+  const full_name = typeof req.body.full_name === 'string' ? req.body.full_name.trim() : '';
+  if (!username || typeof password !== 'string' || !password || !full_name || !role) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   if (!['admin', 'cashier'].includes(role)) {
@@ -46,18 +48,20 @@ router.patch('/:id/active', requireAdmin, (req, res) => {
   if (id === req.session.user.id) {
     return res.status(400).json({ error: 'You cannot deactivate your own account' });
   }
-  db.prepare('UPDATE users SET active = ? WHERE id = ?').run(active ? 1 : 0, id);
+  const info = db.prepare('UPDATE users SET active = ? WHERE id = ?').run(active ? 1 : 0, id);
+  if (info.changes === 0) return res.status(404).json({ error: 'User not found' });
   res.json({ ok: true });
 });
 
 // Admin resets another user's password
 router.post('/:id/reset-password', requireAdmin, (req, res) => {
   const { newPassword } = req.body;
-  if (!newPassword || newPassword.length < 6) {
+  if (typeof newPassword !== 'string' || newPassword.length < 6) {
     return res.status(400).json({ error: 'New password must be at least 6 characters' });
   }
   const hash = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, Number(req.params.id));
+  const info = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, Number(req.params.id));
+  if (info.changes === 0) return res.status(404).json({ error: 'User not found' });
   res.json({ ok: true });
 });
 

@@ -34,8 +34,10 @@ router.get('/', requireAuth, (req, res) => {
   `;
   const params = [];
 
-  if (from) { sql += ' AND date(s.created_at) >= date(?)'; params.push(from); }
-  if (to) { sql += ' AND date(s.created_at) <= date(?)'; params.push(to); }
+  // created_at is stored in UTC; compare on the local calendar date the
+  // user picked in the filter.
+  if (from) { sql += " AND date(s.created_at, 'localtime') >= date(?)"; params.push(from); }
+  if (to) { sql += " AND date(s.created_at, 'localtime') <= date(?)"; params.push(to); }
   if (cashier_id) { sql += ' AND s.user_id = ?'; params.push(Number(cashier_id)); }
   if (q) { sql += ' AND (s.receipt_no LIKE ? OR s.customer_name LIKE ?)'; params.push(`%${q}%`, `%${q}%`); }
 
@@ -59,9 +61,21 @@ router.get('/:id', requireAuth, (req, res) => {
   res.json({ sale, items });
 });
 
-// Void a sale (admin only) — keeps history but flags it
+// Void a sale (admin only) — keeps history but flags it, and puts any
+// tracked stock it consumed back on the shelf.
 router.patch('/:id/void', requireAdmin, (req, res) => {
-  db.prepare('UPDATE sales SET voided = 1 WHERE id = ?').run(req.params.id);
+  const sale = db.prepare('SELECT id, voided FROM sales WHERE id = ?').get(req.params.id);
+  if (!sale) return res.status(404).json({ error: 'Sale not found' });
+  if (sale.voided) return res.status(400).json({ error: 'This sale is already voided' });
+
+  const items = db.prepare('SELECT product_id, qty FROM sale_items WHERE sale_id = ? AND product_id IS NOT NULL').all(sale.id);
+  const restock = db.prepare('UPDATE products SET stock_qty = stock_qty + ? WHERE id = ? AND track_stock = 1');
+
+  db.transaction(() => {
+    db.prepare('UPDATE sales SET voided = 1 WHERE id = ?').run(sale.id);
+    for (const item of items) restock.run(item.qty, item.product_id);
+  })();
+
   res.json({ ok: true });
 });
 

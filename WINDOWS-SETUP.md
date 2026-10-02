@@ -45,8 +45,8 @@ the fastest way to see the whole pipeline work end to end:
 4. Double-click **`agent\start-agent.bat`**. Leave that window open too.
 5. Print anything to any printer set up on this PC (even a "Microsoft Print
    to PDF" printer works for testing — it still creates a real spooler job).
-6. Back in the app's **Print Monitoring** page, the job should show up
-   under "Pending review" within a couple of seconds.
+6. Back in the app's **Print Monitoring** page, the job should show up in
+   the print job log (as "Unreviewed") within a few seconds of finishing.
 
 Once you're happy it works, move `agent/` to whichever PC is actually
 connected to your real printer and point `backendUrl` at your server's real

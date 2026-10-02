@@ -69,7 +69,9 @@ try {
 try {
   while ($true) {
     $evt = Wait-Event -SourceIdentifier $sourceId
-    Remove-Event -SourceIdentifier $sourceId
+    # Remove only THIS event. Removing by -SourceIdentifier would also discard
+    # any other jobs that finished in the same polling window, losing them.
+    Remove-Event -EventIdentifier $evt.EventIdentifier
 
     try {
       $job = $evt.SourceEventArgs.NewEvent.TargetInstance
@@ -86,9 +88,15 @@ try {
       $submittedAt = (Get-Date).ToString("o")
       if ($job.TimeSubmitted) {
         try {
-          $submittedAt = [System.Management.ManagementDateTimeConverter]::ToDateTime($job.TimeSubmitted).ToString("o")
+          # CIM (Register-CimIndicationEvent) already hands back a DateTime;
+          # only the older WMI cmdlets return a raw DMTF string to convert.
+          if ($job.TimeSubmitted -is [DateTime]) {
+            $submittedAt = $job.TimeSubmitted.ToLocalTime().ToString("o")
+          } else {
+            $submittedAt = [System.Management.ManagementDateTimeConverter]::ToDateTime($job.TimeSubmitted).ToString("o")
+          }
         } catch {
-          # Fall back to "now" if the CIM datetime can't be parsed
+          # Fall back to "now" if the datetime can't be parsed
         }
       }
 
@@ -120,7 +128,11 @@ try {
       # at the top of this file about what that does and doesn't tell you.
       $duplexMode = "unknown"
       try {
-        $printerConfig = Get-CimInstance -ClassName Win32_PrinterConfiguration -Filter "Name='$($printerName -replace \"'\", \"''\")'" -ErrorAction Stop
+        # WQL string literals use backslash as the escape character, so escape
+        # backslashes (network printers are named like \\server\printer) and
+        # single quotes before embedding the name in the filter.
+        $wqlName = $printerName.Replace('\', '\\').Replace("'", "\'")
+        $printerConfig = Get-CimInstance -ClassName Win32_PrinterConfiguration -Filter "Name='$wqlName'" -ErrorAction Stop
         if ($printerConfig -and ($null -ne $printerConfig.Duplex)) {
           $duplexMode = if ($printerConfig.Duplex) { "duplex" } else { "simplex" }
         }
