@@ -13,7 +13,11 @@ Built with Node.js, Express, and SQLite — no external database server to set u
 - **Reports** — revenue, sales count, average sale and discounts for any date range, broken down by item, cashier and payment method, with a line-item **CSV export**.
 - **End-of-day close (Z-report)** — shows the day's takings by payment method and the cash expected in the drawer; enter the cash counted and the shortage/overage is recorded with an optional note, and a printable Z-report opens. A closed day blocks new sales and voids until an admin reopens it. Unclosed days can be printed as an X-report.
 - **Dashboard** — today / last 7 days / this month, a 14-day revenue chart, today's payment mix, top items, low-stock alerts, and (for admins) pages printed today and today's print gap.
-- **Print monitoring** — a Windows agent watches the print spooler and reports every finished job (metadata only: document name, pages, colour/mono, user, printer). Admins see a daily summary, a per-printer breakdown and a job log they can mark reviewed or flag. It never creates sales. See `agent/README.md`.
+- **Print monitoring with job analysis** — a Windows agent watches the print spooler and reports every finished job with the settings it was actually sent with (copies, colour, duplex, paper size, client PC). The server analyses each job (`server/lib/printAnalysis.js`):
+  - **Pages actually printed** = pages × copies, plus sheets for duplex jobs.
+  - **Was the whole document printed?** The document's length comes from the source file's page count (opt-in agent setting `inspectDocuments`) or, failing that, the same client's earlier prints of it. Each job is marked *all pages*, *partial* ("3 of 12"), *part of a split print* (a document printed in several parts that add up to the whole), or *length unknown*. Identical repeats are flagged as *reprints*.
+  - **Client sessions**: each client's jobs (same PC and Windows user) are grouped into a visit using an adaptive time gap (3× the client's typical pause, between 90 s and 10 min). A session is flagged when the client fires **several jobs within a minute** or has **jobs printing at the same time** (overlapping submit-to-finish windows).
+  Admins review and flag whole sessions. At the till, cashiers see **print jobs waiting to be billed** and add a session to the sale in one tap: it is priced from the colour/B&W print-service products, matching A3/A4 by product name. Once billed, a session can't be billed again; voiding the sale reopens it. Nothing is ever billed automatically. See `agent/README.md`.
 - **Printed vs sold** — mark products as colour or B&W **print services** (1 quantity = 1 page) and this page compares, per day, pages the agents saw printed against pages actually sold, with the gap and its estimated unbilled value.
 - **Products & stock** — price, SKU, category, print-service type and optional stock tracking with a low-stock level. Every stock change (opening stock, sale, void, manual adjustment with a reason, edit) is kept in a per-product **stock history**.
 - **Accounts & roles** — admin and cashier logins (bcrypt-hashed passwords). Admins add users, edit names and roles, reset passwords and disable accounts (effective immediately). The last active admin can't be demoted.
@@ -83,8 +87,8 @@ Windows PC + Printer(s)                          Receipt System Backend
 ```
 
 - **Detection & timing**: the agent subscribes to a WMI event for `Win32_PrintJob` **completion** (not submission) — this fires once a job finishes printing, giving a final, accurate page count and confirming the print actually happened rather than just being requested.
-- **Color/mono detection**: `Win32_PrintJob.Color` is a *string* property (`"Color"` or `"Monochrome"`) per Microsoft's documented class members. An earlier version of `watch-print-jobs.ps1` compared it as a boolean, which is a real bug — in PowerShell any non-empty string (including `"Monochrome"`) is truthy, so it reported "color" for nearly everything. That's fixed now: it compares the actual string values. Still worth spot-checking against your printers, since driver accuracy itself can vary.
-- **Duplex/two-sided is best-effort, not a guarantee**: `Win32_PrintJob` has no duplex property at all — confirmed against Microsoft's documented class members, not a driver gap. The agent instead reads the *printer's* current default duplex setting (`Win32_PrinterConfiguration.Duplex`) at the moment each job finishes, which is a real signal but not proof that specific job used it — and some drivers don't expose it, in which case it's reported as "unknown" rather than guessed. If you know how a printer is normally used, `agent/config.json`'s `printerDuplexAssumption` lets you override whatever was detected with a manual assumption per printer — clearly a guess, not a detection, same pattern as `printerColorOverride`.
+- **Per-job settings (copies, colour, duplex, paper)**: when a job enters the queue the agent reads that job's own DEVMODE from the spooler (`GetJob` level 2), so copies, colour/mono, duplex and paper size reflect what *this job* was sent with. If a job comes and goes too fast to catch (WMI polls every second), it falls back to `Win32_PrintJob.Color` (a *string*, `"Color"`/`"Monochrome"`) and the printer's default duplex setting, and copies are assumed to be 1. Driver accuracy varies, so spot-check against your printers.
+- **Manual overrides**: if a printer's driver reports colour or duplex unreliably, `printerColorOverride` / `printerDuplexAssumption` in `agent/config.json` force a value per printer. This is a stated assumption, not a detection.
 - **Known-hardware color override**: if a printer's hardware capability is certain (e.g. mono-only), `printerColorOverride` in `agent/config.json` forces its jobs to that mode regardless of what the driver reports.
 - **Auth**: agents authenticate with a long random API key (`X-Agent-Key` header), separate from user logins. Keys are stored as SHA-256 hashes server-side and shown to the admin exactly once at registration. An admin can disable an agent at any time to revoke it immediately.
 - **Idempotency**: each job is deduped server-side on `(agent, printer, OS job id, day)`, so re-sending a job that already made it through (e.g. after a retry) is a no-op.
@@ -103,6 +107,7 @@ receipt-system/
 │   ├── lib/
 │   │   ├── saleCreator.js  Sale creation, totals, payments, receipt numbers
 │   │   ├── stock.js        Stock changes + stock history log
+│   │   ├── printAnalysis.js Pages x copies, document coverage, client sessions
 │   │   ├── dates.js        Local business-date helpers
 │   │   └── csv.js          CSV export helper
 │   └── routes/
@@ -115,6 +120,7 @@ receipt-system/
 │       ├── agents.js        Print monitor agent registration (admin)
 │       ├── printJobs.js     Print job ingest (agent) + review queue (admin)
 │       ├── reports.js       Date-range reports, CSV export, end-of-day close
+│       ├── printSessions.js Client print sessions (admin view + checkout list)
 │       └── reconciliation.js Pages printed vs pages sold
 ├── public/
 │   ├── login.html
@@ -131,6 +137,7 @@ receipt-system/
 ├── agent/                   Windows print monitor agent (runs on the printer's PC, not this server)
 │   ├── watch-print-jobs.ps1  WMI event watcher — emits JSON per detected job
 │   ├── agent.js               Node wrapper: batching, retry queue, heartbeat
+│   ├── docPages.js            Opt-in source document page counter (PDF/DOCX/PPTX)
 │   ├── config.example.json
 │   └── README.md              Agent-specific setup & troubleshooting
 ├── windows/                 install.bat / start.bat / build.bat (standalone .exe, see WINDOWS-SETUP.md)

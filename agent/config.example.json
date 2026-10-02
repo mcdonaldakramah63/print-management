@@ -4,6 +4,7 @@
   "printers": [],
   "heartbeatIntervalMs": 60000,
   "flushIntervalMs": 5000,
+  "inspectDocuments": false,
   "printerColorOverride": {
     "HP LaserJet 500 MFP M525": "mono"
   },

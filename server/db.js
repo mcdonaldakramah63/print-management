@@ -128,6 +128,31 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id, created_at);
 
+-- A print session: one client's burst of print jobs, grouped by
+-- server/lib/printAnalysis.js. Totals and flags are recomputed whenever a
+-- job joins. A session linked to a sale (sale_id) is billed and closed.
+CREATE TABLE IF NOT EXISTS print_sessions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id        INTEGER NOT NULL REFERENCES agents(id),
+  client_key      TEXT NOT NULL,
+  owner           TEXT NOT NULL DEFAULT '',
+  machine         TEXT NOT NULL DEFAULT '',
+  started_at      TEXT NOT NULL,
+  ended_at        TEXT NOT NULL,
+  job_count       INTEGER NOT NULL DEFAULT 0,
+  document_count  INTEGER NOT NULL DEFAULT 0,
+  color_pages     INTEGER NOT NULL DEFAULT 0,
+  mono_pages      INTEGER NOT NULL DEFAULT 0,
+  unknown_pages   INTEGER NOT NULL DEFAULT 0,
+  sheets          INTEGER NOT NULL DEFAULT 0,
+  max_concurrent  INTEGER NOT NULL DEFAULT 1,
+  flags           TEXT NOT NULL DEFAULT '[]',
+  sale_id         INTEGER REFERENCES sales(id),
+  billed_at       TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_print_sessions_client ON print_sessions(client_key, ended_at);
+
 -- One row per closed business day (local date, YYYY-MM-DD): the end-of-day
 -- "Z-report" snapshot, frozen when the day is closed.
 CREATE TABLE IF NOT EXISTS day_closings (
@@ -176,6 +201,29 @@ ensureColumn('sales', 'customer_phone', "customer_phone TEXT NOT NULL DEFAULT ''
 ensureColumn('sales', 'voided_at', 'voided_at TEXT');
 ensureColumn('sales', 'voided_by', 'voided_by INTEGER REFERENCES users(id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)');
+
+// Print-job detail captured by the agent (per-job DEVMODE, client PC,
+// completion time, optional source-document page count) and the results of
+// server/lib/printAnalysis.js. pages stays "pages per copy" as reported by
+// the spooler; impressions = pages x copies is what was physically printed.
+ensureColumn('print_jobs', 'copies', 'copies INTEGER');
+ensureColumn('print_jobs', 'collated', 'collated INTEGER');
+ensureColumn('print_jobs', 'paper_size', "paper_size TEXT NOT NULL DEFAULT ''");
+ensureColumn('print_jobs', 'client_machine', "client_machine TEXT NOT NULL DEFAULT ''");
+ensureColumn('print_jobs', 'completed_at', 'completed_at TEXT');
+ensureColumn('print_jobs', 'settings_source', "settings_source TEXT NOT NULL DEFAULT ''");
+ensureColumn('print_jobs', 'document_pages', 'document_pages INTEGER');
+ensureColumn('print_jobs', 'document_pages_source', "document_pages_source TEXT NOT NULL DEFAULT ''");
+ensureColumn('print_jobs', 'doc_key', "doc_key TEXT NOT NULL DEFAULT ''");
+ensureColumn('print_jobs', 'impressions', 'impressions INTEGER');
+ensureColumn('print_jobs', 'sheets', 'sheets INTEGER');
+ensureColumn('print_jobs', 'est_document_pages', 'est_document_pages INTEGER');
+ensureColumn('print_jobs', 'est_source', "est_source TEXT NOT NULL DEFAULT ''");
+ensureColumn('print_jobs', 'coverage', "coverage TEXT NOT NULL DEFAULT 'unknown'");
+ensureColumn('print_jobs', 'flags', "flags TEXT NOT NULL DEFAULT '[]'");
+ensureColumn('print_jobs', 'session_id', 'session_id INTEGER REFERENCES print_sessions(id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_session ON print_jobs(session_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_doc ON print_jobs(doc_key)');
 
 // ---------- Seed default settings row ----------
 const settingsExists = db.prepare('SELECT 1 FROM settings WHERE id = 1').get();

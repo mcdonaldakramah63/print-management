@@ -81,6 +81,11 @@
       </div>
       <div class="callout info" id="sale-closed" hidden>Today has been closed. An admin must reopen it in Reports before more sales can be recorded.</div>
       <div class="checkout">
+        <div class="stack" style="min-width:0;">
+        <section class="card stack" id="waiting-sessions" aria-labelledby="h-waiting" hidden>
+          <div class="spread"><h2 id="h-waiting">Print jobs waiting to be billed</h2><button class="btn btn-ghost btn-sm" type="button" id="waiting-refresh">Refresh</button></div>
+          <div id="waiting-list"></div>
+        </section>
         <section class="card stack" aria-label="Product catalog">
           <div class="row">
             <label class="sr-only" for="catalog-search">Search products</label>
@@ -90,6 +95,7 @@
           <div class="chips" id="catalog-cats" role="group" aria-label="Categories"></div>
           <div class="tiles" id="catalog-tiles"></div>
         </section>
+        </div>
 
         <section class="card cart" aria-label="Current sale">
           <div class="spread"><h2>Current sale</h2><button class="btn btn-ghost btn-sm" type="button" id="clear-cart-btn">Clear</button></div>
@@ -97,6 +103,7 @@
             <div class="field"><label for="customer-name">Customer</label><input id="customer-name" placeholder="Walk-in customer" maxlength="200"></div>
             <div class="field"><label for="customer-phone">Phone (optional)</label><input id="customer-phone" type="tel" maxlength="40"></div>
           </div>
+          <div id="cart-sessions" class="chips"></div>
           <div class="cart-lines" id="cart-lines"></div>
           <div class="discount-row">
             <div class="field"><label for="discount-value">Discount</label><input id="discount-value" type="number" min="0" step="0.01" value="0"></div>
@@ -194,21 +201,15 @@
         <div><span class="eyebrow">Print shop</span><h1 id="h-pm">Print monitor</h1></div>
         <div class="page-actions">
           <div class="field"><label for="summary-date">Day</label><input id="summary-date" type="date"></div>
+          <div class="field"><label for="session-filter">Show</label>
+            <select id="session-filter"><option value="">All sessions</option><option value="unbilled">Not billed yet</option><option value="billed">Billed</option><option value="flagged">With alerts</option></select></div>
         </div>
       </div>
       <div class="grid grid-4" id="summary-kpis"></div>
       <div class="grid grid-2-1">
-        <div class="card">
-          <div class="card-head">
-            <h2>Print job log</h2>
-            <div class="row">
-              <label class="sr-only" for="pj-status">Status</label>
-              <select id="pj-status" class="input" style="width:auto;"><option value="">All jobs</option><option value="draft">Unreviewed</option><option value="approved">Reviewed</option><option value="rejected">Flagged</option></select>
-              <button class="btn btn-outline btn-sm" id="pj-bulk-review" type="button" disabled>Mark reviewed</button>
-              <button class="btn btn-outline btn-sm" id="pj-bulk-flag" type="button" disabled>Flag</button>
-            </div>
-          </div>
-          <div class="table-wrap" id="print-jobs-table-wrap"></div>
+        <div class="stack">
+          <p class="muted small" style="margin:0;">Each card is one client's visit: their jobs grouped together, with how much of each document was printed and alerts when they run several jobs at once.</p>
+          <div id="sessions-wrap" class="stack"></div>
         </div>
         <div class="stack">
           <div class="card">

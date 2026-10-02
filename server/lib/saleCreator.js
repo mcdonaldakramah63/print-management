@@ -69,12 +69,15 @@ function isDayClosed(date) {
  * discountValue  - number
  * paymentMethod  - 'cash' | 'momo' | 'card' (default cash)
  * amountTendered - cash handed over (cash only, optional; must cover the total)
+ * printSessionIds - client print sessions this sale bills (optional)
  */
 function createSale({
   userId, customerName, customerPhone, items, discountType, discountValue,
-  paymentMethod, amountTendered
+  paymentMethod, amountTendered, printSessionIds
 }) {
   validateItems(items);
+  const sessionIds = Array.isArray(printSessionIds) ? [...new Set(printSessionIds.map(Number))] : [];
+  if (sessionIds.some((id) => !Number.isInteger(id))) throw new Error('Invalid print session');
 
   if (isDayClosed(localDateString())) {
     throw new Error('Today has already been closed. An admin must reopen it in Reports before more sales can be recorded.');
@@ -122,6 +125,10 @@ function createSale({
     INSERT INTO sale_items (sale_id, name, qty, unit_price, line_total, product_id) VALUES (?, ?, ?, ?, ?, ?)
   `);
 
+  const linkSession = db.prepare(`
+    UPDATE print_sessions SET sale_id = ?, billed_at = datetime('now') WHERE id = ? AND sale_id IS NULL
+  `);
+
   let receiptNo;
   const saleId = db.transaction(() => {
     // Generated inside the transaction so the number and the insert are atomic.
@@ -136,6 +143,12 @@ function createSale({
       const productId = item.product_id ? Number(item.product_id) : null;
       insertItem.run(id, String(item.name).trim(), item.qty, item.unit_price, round2(item.qty * item.unit_price), productId);
       if (productId) moveStock({ productId, delta: -item.qty, reason: 'sale', saleId: id, userId });
+    }
+    // Print sessions rung up in this sale are marked billed; a session can
+    // only be billed once, so two tills can't charge the same client twice.
+    for (const sessionId of sessionIds) {
+      const linked = linkSession.run(id, sessionId);
+      if (linked.changes === 0) throw new Error('That print session was already billed or no longer exists');
     }
     return id;
   })();

@@ -6,16 +6,16 @@ const { SALE_DAY, isDateString, localDateString, daysAgo } = require('../lib/dat
 
 const router = express.Router();
 
-// Pages printed (from the print agents) vs pages sold (quantity of products
+// Pages printed (from the print agents; pages x copies) vs pages sold (quantity of products
 // marked as colour / B&W print services), one row per day.
 function reconcile(from, to) {
   // print_jobs.submitted_at is the agent's local timestamp; its first 10
   // characters are the wall-clock date the job printed.
   const printed = db.prepare(`
     SELECT substr(submitted_at, 1, 10) AS day,
-      COALESCE(SUM(CASE WHEN color_mode = 'color' THEN pages END), 0) AS color,
-      COALESCE(SUM(CASE WHEN color_mode = 'mono' THEN pages END), 0) AS mono,
-      COALESCE(SUM(CASE WHEN color_mode NOT IN ('color','mono') OR color_mode IS NULL THEN pages END), 0) AS unknown
+      COALESCE(SUM(CASE WHEN color_mode = 'color' THEN COALESCE(impressions, pages) END), 0) AS color,
+      COALESCE(SUM(CASE WHEN color_mode = 'mono' THEN COALESCE(impressions, pages) END), 0) AS mono,
+      COALESCE(SUM(CASE WHEN color_mode NOT IN ('color','mono') OR color_mode IS NULL THEN COALESCE(impressions, pages) END), 0) AS unknown
     FROM print_jobs
     WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ?
     GROUP BY day
@@ -76,7 +76,14 @@ function reconcile(from, to) {
     SELECT id, name, price, print_color_mode FROM products WHERE active = 1 AND print_color_mode IS NOT NULL ORDER BY name
   `).all();
 
-  return { from, to, rows, totals, prices: { color: round2(prices.color), mono: round2(prices.mono) }, printServices };
+  // Client sessions in the range and how many were rung up from checkout.
+  const sessions = db.prepare(`
+    SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN sale_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS billed
+    FROM print_sessions
+    WHERE id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ?)
+  `).get(from, to);
+
+  return { from, to, rows, totals, sessions, prices: { color: round2(prices.color), mono: round2(prices.mono) }, printServices };
 }
 
 router.get('/', requireAdmin, (req, res) => {

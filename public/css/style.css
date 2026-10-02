@@ -261,6 +261,25 @@ td .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wra
 .callout.info { background: var(--accent-soft); color: var(--accent-ink); }
 .list-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
 
+/* ---------- Print sessions ---------- */
+.session { display: flex; flex-direction: column; gap: 12px; }
+.session-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.session-client { font-family: var(--font-head); font-size: 16px; font-weight: 700; }
+.session-meta { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.session-meta b { color: var(--ink); font-family: var(--font-mono); font-weight: 600; }
+.alert-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.alert-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 14px; font-size: 12.5px; font-weight: 600; background: var(--warn-bg); color: var(--warn-ink); }
+.alert-chip.info { background: var(--accent-soft); color: var(--accent-ink); }
+.alert-chip.neutral { background: var(--line-soft); color: #3F433C; }
+.alert-chip svg { width: 14px; height: 14px; }
+.coverage { display: flex; flex-direction: column; gap: 3px; min-width: 120px; }
+.coverage .bar { height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; }
+.coverage .bar > div { height: 100%; background: var(--accent); }
+.coverage .bar.partial > div { background: #C2620A; }
+.waiting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.waiting-row:first-child { border-top: none; padding-top: 0; }
+.chip-remove { border: none; background: none; cursor: pointer; color: inherit; padding: 0 0 0 4px; font-size: 15px; }
+
 /* ---------- Z-report card ---------- */
 .z-lines { display: flex; flex-direction: column; gap: 8px; font-family: var(--font-mono); font-size: 13px; }
 .z-lines .t-row { display: flex; justify-content: space-between; gap: 12px; }

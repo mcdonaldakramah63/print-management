@@ -11,6 +11,13 @@ and cross-check it against what was rung up in Sales History.
 
 ## How it works
 
+- When a job enters the queue, the watcher reads **that job's own print
+  settings** from the spooler (`GetJob` level 2 → its DEVMODE): copies,
+  colour/mono, duplex, collation, paper size, and the client PC that sent it.
+  These are the settings the job was actually sent with, not the printer's
+  defaults. When the job finishes, they are reported with its final page
+  count, so the server can count **pages × copies** and sheets.
+
 - `watch-print-jobs.ps1` subscribes to a WMI event for `Win32_PrintJob`
   **completion** — it fires once a job finishes printing (or is cancelled),
   which gives an accurate final page count and confirms the print actually
@@ -48,6 +55,24 @@ and cross-check it against what was rung up in Sales History.
    Print something on the PC, then check the **Print Monitoring** page in
    the app — the job should appear in the print job log as "Unreviewed"
    within a few seconds of it finishing.
+
+## Optional: counting the whole document's pages
+
+Windows only tells the agent how many pages were *printed*, not how long the
+document is. To detect partial prints ("printed 3 of 12 pages"), set
+`"inspectDocuments": true` in `config.json`. For each job the agent then looks
+for the source file **on this PC**: the submitting user's Recent items, their
+Downloads/Desktop/Documents folders, and the top of any USB drive. If it finds
+the file, it reads only the page count:
+
+- PDF: the page tree's page count
+- Word (.docx) / PowerPoint (.pptx): the page/slide count Office saves in the file's properties
+- Images: 1 page
+
+The file, its path and its contents never leave the PC: only the number is
+sent. Jobs printed from another computer over the network can't be checked
+this way. With the setting off (the default), the server still estimates a
+document's length from the same client's earlier prints of it.
 
 ## Running it automatically (Task Scheduler)
 

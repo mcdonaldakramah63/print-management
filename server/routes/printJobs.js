@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { requireAgent } = require('../middleware/agentAuth');
+const analysis = require('../lib/printAnalysis');
 
 const router = express.Router();
 
@@ -58,12 +59,16 @@ router.post('/ingest', requireAgent, (req, res) => {
   const insert = db.prepare(`
     INSERT OR IGNORE INTO print_jobs (
       agent_id, dedupe_key, printer_name, document_name,
-      submitted_by, pages, size_bytes, color_mode, duplex, submitted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      submitted_by, pages, size_bytes, color_mode, duplex, submitted_at,
+      copies, collated, paper_size, client_machine, completed_at, settings_source,
+      document_pages, document_pages_source, doc_key, impressions, sheets
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const posInt = (v) => (Number.isInteger(v) && v > 0 ? v : null);
   let inserted = 0;
   const errors = [];
+  const insertedIds = [];
 
   const run = db.transaction((list) => {
     for (const job of list) {
@@ -73,22 +78,52 @@ router.post('/ingest', requireAgent, (req, res) => {
         continue;
       }
       const dedupeKey = buildDedupeKey(req.agent.id, job.printer_name, job.external_job_id, job.submitted_at);
+      const pages = Number.isFinite(job.pages) && job.pages >= 0 ? Math.round(job.pages) : null;
+      const copies = posInt(job.copies);
+      const duplex = normalizeDuplex(job.duplex);
+      const documentName = String(job.document_name || '').slice(0, 500);
+      const { impressions, sheets } = analysis.physicalCounts({ pages, copies, duplex });
+      const completedAt = job.completed_at && !Number.isNaN(Date.parse(job.completed_at)) ? String(job.completed_at) : new Date().toISOString();
       const info = insert.run(
         req.agent.id,
         dedupeKey,
         String(job.printer_name),
-        String(job.document_name || '').slice(0, 500),
+        documentName,
         String(job.submitted_by || '').slice(0, 200),
-        Number.isFinite(job.pages) ? job.pages : null,
+        pages,
         Number.isFinite(job.size_bytes) ? job.size_bytes : null,
         normalizeColorMode(job.color_mode),
-        normalizeDuplex(job.duplex),
-        String(job.submitted_at)
+        duplex,
+        String(job.submitted_at),
+        copies,
+        job.collate === true ? 1 : job.collate === false ? 0 : null,
+        analysis.paperLabel(job.paper_size),
+        analysis.normalizeMachine(job.client_machine).slice(0, 100),
+        completedAt,
+        job.settings_source === 'devmode' ? 'devmode' : '',
+        posInt(job.document_pages),
+        posInt(job.document_pages) ? String(job.document_pages_source || '').slice(0, 20) : '',
+        analysis.normalizeDocKey(documentName),
+        impressions,
+        sheets
       );
-      if (info.changes > 0) inserted += 1;
+      if (info.changes > 0) {
+        inserted += 1;
+        insertedIds.push(info.lastInsertRowid);
+      }
     }
   });
   run(jobs);
+
+  // Analyse after the insert commits, oldest first, so a failure in the
+  // analysis can never lose a reported job.
+  for (const id of insertedIds) {
+    try {
+      analysis.analyzeJob(id);
+    } catch (err) {
+      console.error(`Print analysis failed for job ${id}:`, err.message);
+    }
+  }
 
   res.json({ received: jobs.length, inserted, duplicates: jobs.length - inserted - errors.length, errors });
 });
@@ -129,20 +164,24 @@ router.get('/summary', requireAdmin, (req, res) => {
   const totals = db.prepare(`
     SELECT
       COUNT(*) AS job_count,
-      COALESCE(SUM(pages), 0) AS total_pages,
+      COALESCE(SUM(COALESCE(impressions, pages)), 0) AS total_pages,
+      COALESCE(SUM(COALESCE(sheets, pages)), 0) AS total_sheets,
       COALESCE(SUM(CASE WHEN color_mode = 'color' THEN 1 ELSE 0 END), 0) AS color_jobs,
       COALESCE(SUM(CASE WHEN color_mode = 'mono' THEN 1 ELSE 0 END), 0) AS mono_jobs,
       COALESCE(SUM(CASE WHEN color_mode = 'unknown' THEN 1 ELSE 0 END), 0) AS unknown_color_jobs,
       COALESCE(SUM(CASE WHEN duplex = 'duplex' THEN 1 ELSE 0 END), 0) AS duplex_jobs,
       COALESCE(SUM(CASE WHEN duplex = 'simplex' THEN 1 ELSE 0 END), 0) AS simplex_jobs,
-      COALESCE(SUM(CASE WHEN color_mode = 'color' THEN pages ELSE 0 END), 0) AS color_pages,
-      COALESCE(SUM(CASE WHEN color_mode = 'mono' THEN pages ELSE 0 END), 0) AS mono_pages
+      COALESCE(SUM(CASE WHEN color_mode = 'color' THEN COALESCE(impressions, pages) ELSE 0 END), 0) AS color_pages,
+      COALESCE(SUM(CASE WHEN color_mode = 'mono' THEN COALESCE(impressions, pages) ELSE 0 END), 0) AS mono_pages,
+      COALESCE(SUM(CASE WHEN coverage IN ('partial') THEN 1 ELSE 0 END), 0) AS partial_jobs,
+      COALESCE(SUM(CASE WHEN copies > 1 THEN 1 ELSE 0 END), 0) AS multi_copy_jobs,
+      COUNT(DISTINCT session_id) AS sessions
     FROM print_jobs pj
     WHERE ${JOB_DAY} = ?
   `).get(date);
 
   const byPrinter = db.prepare(`
-    SELECT printer_name, COUNT(*) AS job_count, COALESCE(SUM(pages), 0) AS total_pages
+    SELECT printer_name, COUNT(*) AS job_count, COALESCE(SUM(COALESCE(impressions, pages)), 0) AS total_pages
     FROM print_jobs pj
     WHERE ${JOB_DAY} = ?
     GROUP BY printer_name

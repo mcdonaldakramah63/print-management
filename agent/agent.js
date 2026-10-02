@@ -16,6 +16,7 @@
 
 const { spawn } = require('child_process');
 const readline = require('readline');
+const { countDocumentPages } = require('./docPages');
 const fs = require('fs');
 const path = require('path');
 
@@ -37,7 +38,8 @@ const {
   flushIntervalMs = 5000,
   scriptPath = path.join(__dirname, 'watch-print-jobs.ps1'),
   printerColorOverride = {},
-  printerDuplexAssumption = {}
+  printerDuplexAssumption = {},
+  inspectDocuments = false
 } = config;
 
 // Some printers' drivers don't report Win32_PrintJob.Color accurately (a
@@ -75,6 +77,24 @@ function applyDuplexAssumption(job) {
   return job;
 }
 
+// Opt-in (config "inspectDocuments": true): the watcher looks up each job's
+// source file on this PC and hands over its local path. Only the page count
+// is read from it (PDF page tree / Word & PowerPoint document properties), so
+// the server can tell whether the whole document was printed. The path and
+// the file itself never leave this PC.
+function applyDocumentPages(job) {
+  const sourcePath = job.source_path;
+  delete job.source_path;
+  if (inspectDocuments && sourcePath) {
+    const counted = countDocumentPages(sourcePath);
+    if (counted) {
+      job.document_pages = counted.pages;
+      job.document_pages_source = counted.source;
+    }
+  }
+  return job;
+}
+
 if (!backendUrl || !agentApiKey) {
   console.error('config.json must set both "backendUrl" and "agentApiKey".');
   process.exit(1);
@@ -104,7 +124,9 @@ const MAX_BACKOFF_MS = 60000;
 function enqueue(job) {
   queue.push(job);
   saveQueue(queue);
-  log(`Detected: "${job.document_name || '(untitled)'}" on ${job.printer_name} (queue: ${queue.length})`);
+  const copies = job.copies > 1 ? ` x${job.copies}` : '';
+  const ofTotal = job.document_pages ? ` of ${job.document_pages}` : '';
+  log(`Detected: "${job.document_name || '(untitled)'}" on ${job.printer_name}, ${job.pages}${ofTotal} page(s)${copies} (queue: ${queue.length})`);
 }
 
 // setInterval keeps firing while a slow request (or a backoff sleep) is in
@@ -175,6 +197,7 @@ function log(msg) {
 function startWatcher() {
   const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath];
   if (printers.length > 0) args.push('-Printers', printers.join(','));
+  if (inspectDocuments) args.push('-InspectDocuments');
 
   log(`Starting watcher: powershell.exe ${args.join(' ')}`);
   const ps = spawn('powershell.exe', args, { windowsHide: true });
@@ -184,7 +207,7 @@ function startWatcher() {
     const line = rawLine.trim();
     if (!line || !line.startsWith('{')) return; // skip Write-Host status lines
     try {
-      enqueue(applyDuplexAssumption(applyColorOverride(JSON.parse(line))));
+      enqueue(applyDocumentPages(applyDuplexAssumption(applyColorOverride(JSON.parse(line)))));
     } catch {
       log(`Could not parse watcher output as JSON: ${line}`);
     }

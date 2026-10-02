@@ -13,6 +13,10 @@ const session = require('express-session');
 
 require('./db'); // ensures DB + default admin exist before routes load
 
+// Group and score print jobs recorded before print analysis existed.
+const backfilled = require('./lib/printAnalysis').backfill();
+if (backfilled) console.log(`Analysed ${backfilled} earlier print job(s) into client sessions.`);
+
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const settingsRoutes = require('./routes/settings');
@@ -22,6 +26,7 @@ const dashboardRoutes = require('./routes/dashboard');
 const agentRoutes = require('./routes/agents');
 const printJobRoutes = require('./routes/printJobs');
 const reportRoutes = require('./routes/reports');
+const printSessionRoutes = require('./routes/printSessions');
 const { router: reconciliationRoutes } = require('./routes/reconciliation');
 
 const app = express();
@@ -53,6 +58,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/print-jobs', printJobRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/print-sessions', printSessionRoutes);
 app.use('/api/reconciliation', reconciliationRoutes);
 
 app.get('/', (req, res) => res.redirect('/login.html'));
