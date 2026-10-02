@@ -12,7 +12,15 @@ Built with Node.js, Express, and SQLite — no external database server to set u
 - **Sales history** — filter by date, payment method, status, receipt number, customer or phone; paginated; **CSV export**; reprint any receipt; admins can void a sale (kept in history, excluded from totals, tracked stock returned).
 - **Reports** — revenue, sales count, average sale and discounts for any date range, broken down by item, cashier and payment method, with a line-item **CSV export**.
 - **End-of-day close (Z-report)** — shows the day's takings by payment method and the cash expected in the drawer; enter the cash counted and the shortage/overage is recorded with an optional note, and a printable Z-report opens. A closed day blocks new sales and voids until an admin reopens it. Unclosed days can be printed as an X-report.
-- **Dashboard** — today / last 7 days / this month, a 14-day revenue chart, today's payment mix, top items, low-stock alerts, and (for admins) pages printed today and today's print gap.
+- **Dashboard** — today / last 7 days / this month, today's payment mix, top items, and (for admins) pages printed today and today's print gap, plus the insight features below.
+
+### Insights (`server/lib/insights/`)
+
+- **Revenue forecast** (`forecast.js`) — damped additive Holt-Winters with a weekly season; smoothing parameters are chosen by grid search on one-step-ahead error, the history is winsorised (median ± 3·MAD) so one huge order can't bend it, and the 80% range comes from the robust spread of the residuals. Shows the next 7 days and the typical error. With under three weeks of data it uses weekday medians. **Today's pace** projects the close from the shop's own intraday profile (the share of a day's takings normally in by this time) and says whether you're ahead, on track or behind.
+- **Risk alerts** (`risk.js`, admin) — cashier void rates and discount rates with empirical-Bayes (Beta) shrinkage, so small samples aren't flagged; daily takings vs the same weekday in previous weeks (robust z-score); unusually large print gaps; unusually large cash shortages and runs of consecutive shortages; sales voided long after they were made.
+- **Stock-out forecast and reorder quantities** (`stock.js`) — daily demand from the stock log; EWMA for steady sellers and Croston's method (Syntetos-Boylan corrected) for intermittent ones; reorder point = demand over the lead time + safety stock (95% service level); suggested order covers lead time + the review period. Lead time and cover days are set in Settings.
+- **Often bought together** (`baskets.js`) — association rules over the last 120 days, ranked by the Wilson lower bound of confidence × log-lift, so coincidences and items that go with everything aren't suggested. Shown at checkout with one-tap add.
+- **Print session ↔ sale matching** (`matching.js`) — unbilled print sessions are paired with hand-rung print-service sales by minimum-cost bipartite matching (Hungarian algorithm) on page mismatch, timing and customer-name similarity, with a reject option so weak pairs aren't forced. Printed vs sold then lists "probably rung up by hand" (confirm to link) separately from "no matching sale found", the prints most likely never paid for. Days with print sales but no print data at all (agent not running) are shown but left out of the totals.
 - **Print monitoring with job analysis** — a Windows agent watches the print spooler and reports every finished job with the settings it was actually sent with (copies, colour, duplex, paper size, client PC). The server analyses each job (`server/lib/printAnalysis.js`):
   - **Pages actually printed** = pages × copies, plus sheets for duplex jobs.
   - **Was the whole document printed?** The document's length comes from the source file's page count (opt-in agent setting `inspectDocuments`) or, failing that, the same client's earlier prints of it. Each job is marked *all pages*, *partial* ("3 of 12"), *part of a split print* (a document printed in several parts that add up to the whole), or *length unknown*. Identical repeats are flagged as *reprints*.
@@ -108,6 +116,7 @@ receipt-system/
 │   │   ├── saleCreator.js  Sale creation, totals, payments, receipt numbers
 │   │   ├── stock.js        Stock changes + stock history log
 │   │   ├── printAnalysis.js Pages x copies, document coverage, client sessions
+│   │   └── insights/       Forecast, risk alerts, stock outlook, basket rules, session matching
 │   │   ├── dates.js        Local business-date helpers
 │   │   └── csv.js          CSV export helper
 │   └── routes/
@@ -121,6 +130,7 @@ receipt-system/
 │       ├── printJobs.js     Print job ingest (agent) + review queue (admin)
 │       ├── reports.js       Date-range reports, CSV export, end-of-day close
 │       ├── printSessions.js Client print sessions (admin view + checkout list)
+│       ├── insights.js      Forecast, risk, stock outlook, suggestions
 │       └── reconciliation.js Pages printed vs pages sold
 ├── public/
 │   ├── login.html

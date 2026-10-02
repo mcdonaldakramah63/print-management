@@ -201,6 +201,9 @@ ensureColumn('sales', 'customer_phone', "customer_phone TEXT NOT NULL DEFAULT ''
 ensureColumn('sales', 'voided_at', 'voided_at TEXT');
 ensureColumn('sales', 'voided_by', 'voided_by INTEGER REFERENCES users(id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at)');
+// Reorder planning: supplier lead time and how many days an order should cover.
+ensureColumn('settings', 'reorder_lead_days', 'reorder_lead_days INTEGER NOT NULL DEFAULT 3');
+ensureColumn('settings', 'reorder_cover_days', 'reorder_cover_days INTEGER NOT NULL DEFAULT 14');
 
 // Print-job detail captured by the agent (per-job DEVMODE, client PC,
 // completion time, optional source-document page count) and the results of

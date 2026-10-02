@@ -67,4 +67,18 @@ router.patch('/:id/flag', requireAdmin, (req, res) => {
   res.json({ ok: true, updated });
 });
 
+// Confirm that an unbilled session was paid for by an existing sale (e.g. the
+// cashier rang it up by hand). Links them so it counts as billed.
+router.patch('/:id/link', requireAdmin, (req, res) => {
+  const saleId = Number(req.body.sale_id);
+  const sale = db.prepare('SELECT id, voided FROM sales WHERE id = ?').get(saleId);
+  if (!sale || sale.voided) return res.status(400).json({ error: 'Choose a valid, non-voided sale' });
+  if (db.prepare('SELECT 1 FROM print_sessions WHERE sale_id = ?').get(saleId)) {
+    return res.status(409).json({ error: 'That sale already bills another print session' });
+  }
+  const info = db.prepare(`UPDATE print_sessions SET sale_id = ?, billed_at = datetime('now') WHERE id = ? AND sale_id IS NULL`).run(saleId, Number(req.params.id));
+  if (info.changes === 0) return res.status(404).json({ error: 'Print session not found or already billed' });
+  res.json({ ok: true });
+});
+
 module.exports = router;

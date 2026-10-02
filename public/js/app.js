@@ -261,11 +261,22 @@ function wireGoLinks(container) {
 // ---------------------------------------------------------------
 async function loadDashboard() {
   $('dash-date').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
-  const data = await api('GET', '/api/dashboard/summary');
+  const [data, forecast, stock, risk] = await Promise.all([
+    api('GET', '/api/dashboard/summary'),
+    api('GET', '/api/insights/forecast').catch(() => null),
+    api('GET', '/api/insights/stock').catch(() => ({ products: [] })),
+    isAdmin() ? api('GET', '/api/insights/risk').catch(() => ({ alerts: [] })) : Promise.resolve(null)
+  ]);
   $('dash-closed').hidden = !data.closedToday;
 
+  const pace = forecast && forecast.today;
+  const PACE_TEXT = { ahead: 'ahead of forecast', behind: 'behind forecast', on_track: 'on track' };
+  const todaySub = pace && pace.projected != null
+    ? `${plural(data.today.count, 'sale')} · heading for ${cur(pace.projected)} (${PACE_TEXT[pace.pace]})`
+    : pace && pace.forecast ? `${plural(data.today.count, 'sale')} · forecast ${cur(pace.forecast)}` : plural(data.today.count, 'sale');
+
   const kpis = [
-    { label: 'Today', value: cur(data.today.revenue), sub: plural(data.today.count, 'sale') },
+    { label: 'Today', value: cur(data.today.revenue), sub: todaySub },
     { label: 'Last 7 days', value: cur(data.last7Days.revenue), sub: plural(data.last7Days.count, 'sale') },
     { label: 'This month', value: cur(data.thisMonth.revenue), sub: plural(data.thisMonth.count, 'sale') }
   ];
@@ -277,7 +288,11 @@ async function loadDashboard() {
   }
   $('dash-kpis').innerHTML = kpis.map(kpiCard).join('');
 
-  renderBarChart(data.dailySeries);
+  if (forecast && forecast.forecast.length) renderForecastChart(forecast);
+  else {
+    renderBarChart(data.dailySeries);
+    $('forecast-note').textContent = 'A forecast appears after a week of sales';
+  }
 
   const mixTotal = data.paymentMix.reduce((s, m) => s + m.revenue, 0);
   $('dash-mix').innerHTML = data.paymentMix.length === 0
@@ -302,8 +317,75 @@ async function loadDashboard() {
     ${data.topItems.map((i) => `<tr><td>${escapeHtml(i.name)}</td><td class="num">${round2(i.qty)}</td><td class="num">${escapeHtml(cur(i.revenue))}</td></tr>`).join('')}
     </tbody></table>`;
 
-  $('dash-low').innerHTML = data.lowStock.length === 0 ? '<p class="muted" style="margin:0;">All tracked stock is above its alert level.</p>'
-    : data.lowStock.map((s) => `<div class="list-row"><span>${escapeHtml(s.name)}</span><span class="badge warn">${s.stock_qty} left · alert at ${s.reorder_level}</span></div>`).join('');
+  renderStockOutlook(stock.products);
+  if (risk) renderRisk(risk.alerts);
+}
+
+const STOCK_STATUS = {
+  out: ['Out of stock', 'danger'],
+  order_now: ['Order now', 'danger'],
+  order_soon: ['Order soon', 'warn'],
+  below_alert: ['Below alert level', 'warn']
+};
+
+function renderStockOutlook(products) {
+  const attention = products.filter((p) => p.status !== 'ok');
+  if (products.length === 0) {
+    $('dash-low').innerHTML = '<p class="muted" style="margin:0;">No products track stock yet.</p>';
+    return;
+  }
+  if (attention.length === 0) {
+    const next = products.filter((p) => p.days_left !== null).sort((a, b) => a.days_left - b.days_left)[0];
+    $('dash-low').innerHTML = `<p class="muted" style="margin:0;">Nothing needs ordering.${next ? ` Next to run low: ${escapeHtml(next.name)}, in about ${plural(Math.round(next.days_left), 'day')}.` : ''}</p>`;
+    return;
+  }
+  $('dash-low').innerHTML = attention.slice(0, 8).map((p) => {
+    const [label, cls] = STOCK_STATUS[p.status];
+    const when = p.status === 'out' ? 'none left'
+      : p.days_left !== null ? `${p.stock_qty} left · runs out in ~${p.days_left < 1 ? 'under a day' : plural(Math.round(p.days_left), 'day')}`
+      : `${p.stock_qty} left`;
+    return `<div class="list-row">
+      <div style="min-width:0;"><div>${escapeHtml(p.name)}</div><div class="muted small">${escapeHtml(when)}${p.daily_rate ? ` · sells ~${p.daily_rate}/day` : ''}</div></div>
+      <div class="row" style="gap:6px; flex-wrap:nowrap;">${p.suggested_order ? `<span class="badge info">Order ${p.suggested_order}</span>` : ''}<span class="badge ${cls}">${label}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function renderRisk(alerts) {
+  const el = $('risk-list');
+  if (!el) return;
+  el.innerHTML = alerts.length === 0
+    ? '<div class="callout ok"><strong>Nothing unusual</strong><span class="small">Voids, discounts, takings, print gaps and cash closings are all within their normal range.</span></div>'
+    : alerts.map((a) => `<div class="risk-row"><span class="sev ${a.severity}">${a.severity}</span><div><strong>${escapeHtml(a.title)}</strong><div class="muted small">${escapeHtml(a.detail)}</div></div></div>`).join('');
+}
+
+function renderForecastChart(f) {
+  const history = f.history.slice(-21);
+  const fc = f.forecast;
+  const today = localDateString();
+  // Today appears as actual-so-far with its forecast range on top.
+  const max = Math.max(1, ...history.map((d) => d.revenue), ...fc.map((p) => p.high), f.today.actual);
+  const h = (v) => Math.max(1, Math.round((v / max) * 100));
+  const cols = history.map((d) => {
+    const label = `${dayLabel(d.day)}: ${cur(d.revenue)}`;
+    return `<div class="bar-col" title="${escapeHtml(label)}"><div class="bar ${d.revenue ? '' : 'zero'}" style="height:${h(d.revenue)}%"></div></div>`;
+  });
+  cols.push('<div class="divider" aria-hidden="true"></div>');
+  for (const p of fc) {
+    const isToday = p.day === today;
+    const label = `${dayLabel(p.day)}: forecast ${cur(p.value)} (likely ${cur(p.low)}–${cur(p.high)})${isToday ? `, so far ${cur(f.today.actual)}` : ''}`;
+    cols.push(`<div class="bar-col" title="${escapeHtml(label)}">
+      <div class="bar fc" style="height:${h(p.value)}%"></div>
+      <div class="range" style="bottom:${h(p.low)}%; height:${Math.max(1, h(p.high) - h(p.low))}%"></div>
+      ${isToday ? `<div class="bar today" style="position:absolute; left:25%; width:50%; bottom:0; height:${h(f.today.actual)}%"></div>` : ''}
+    </div>`);
+  }
+  $('dash-chart').innerHTML = cols.join('');
+  const first = history[0] || fc[0];
+  $('dash-chart-axis').innerHTML = [first.day, today, fc[fc.length - 1].day].map((d, i) => `<span>${escapeHtml(i === 1 ? 'Today' : dayLabel(d, { day: 'numeric', month: 'short' }))}</span>`).join('');
+  $('forecast-note').textContent = f.model.name === 'holt-winters'
+    ? `Learns your weekly pattern · typical daily error ±${f.accuracy}%`
+    : 'Weekday averages (forecast sharpens after 3 weeks of sales)';
 }
 
 function kpiCard(k) {
@@ -409,6 +491,10 @@ function setupSale() {
   });
 
   $('complete-sale-btn').addEventListener('click', completeSale);
+  $('cart-suggestions').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-suggest]');
+    if (b) addToCart(catalog.find((p) => p.id === Number(b.dataset.suggest)));
+  });
 }
 
 async function enterSale() {
@@ -550,6 +636,33 @@ function renderCart() {
   }
   updateStockWarnings();
   renderTotals();
+  scheduleSuggestions();
+}
+
+// "Often bought together": refreshed shortly after the cart's products change.
+let suggestTimer = null;
+let lastSuggestKey = '';
+function scheduleSuggestions() {
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(loadSuggestions, 250);
+}
+
+async function loadSuggestions() {
+  const ids = [...new Set(cart.filter((l) => l.product_id).map((l) => l.product_id))].sort((a, b) => a - b);
+  const key = ids.join(',');
+  const box = $('cart-suggestions');
+  if (ids.length === 0) { box.hidden = true; lastSuggestKey = ''; return; }
+  if (key === lastSuggestKey) return;
+  lastSuggestKey = key;
+  let suggestions = [];
+  try { ({ suggestions } = await api('GET', `/api/insights/suggestions?product_ids=${key}`)); } catch (_) { /* optional */ }
+  if (key !== lastSuggestKey) return; // cart changed meanwhile
+  box.hidden = suggestions.length === 0;
+  box.innerHTML = suggestions.length === 0 ? '' : `<span class="label">Often bought together</span>${suggestions.map((sg) => `
+    <div class="suggest-chip">
+      <span><strong>${escapeHtml(sg.name)}</strong> · ${escapeHtml(cur(sg.price))}<br>in ${Math.round(sg.confidence * 100)}% of sales with ${escapeHtml(sg.because)}</span>
+      <button type="button" class="btn btn-outline btn-sm" data-suggest="${sg.id}">Add</button>
+    </div>`).join('')}`;
 }
 
 function updateStockWarnings() {
@@ -1113,6 +1226,15 @@ async function loadAgents() {
 // Printed vs sold (admin)
 // ---------------------------------------------------------------
 function setupReconcile() {
+  $('audit-likely').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-link-session]');
+    if (!b) return;
+    try {
+      await api('PATCH', `/api/print-sessions/${b.dataset.linkSession}/link`, { sale_id: Number(b.dataset.sale) });
+      toast('Session linked to the sale.');
+      await loadReconcile();
+    } catch (err) { toast(err.message, true); }
+  });
   $('rec-from').value = daysAgoString(13);
   $('rec-to').value = localDateString();
   $('rec-filters').addEventListener('submit', (e) => { e.preventDefault(); loadReconcile().catch((err) => toast(err.message, true)); });
@@ -1135,6 +1257,11 @@ async function loadReconcile() {
     { label: 'Est. unbilled value', value: cur(t.estimated_value), sub: `At ${cur(data.prices.color)} colour / ${cur(data.prices.mono)} B&W per page` }
   ].map(kpiCard).join('');
 
+  renderAudit(data.audit);
+  if (t.no_data_days) {
+    $('rec-setup').insertAdjacentHTML('beforeend', `<div class="callout info"><strong>${plural(t.no_data_days, 'day')} without print data left out of the totals</strong><span class="small">Print services were sold on those days but no agent reported any printing, usually because the agent wasn't running yet.</span></div>`);
+  }
+
   $('rec-table').innerHTML = data.rows.length === 0 ? emptyState('No printing or print-service sales in this range.') : `
     <table>
       <thead><tr><th>Day</th><th class="num">Colour printed</th><th class="num">Colour sold</th><th class="num">B&amp;W printed</th><th class="num">B&amp;W sold</th><th class="num">Unknown</th><th class="num">Gap</th><th class="num">Est. value</th></tr></thead>
@@ -1144,11 +1271,36 @@ async function loadReconcile() {
           <td class="num">${r.color_printed}</td><td class="num">${round2(r.color_sold)}</td>
           <td class="num">${r.mono_printed}</td><td class="num">${round2(r.mono_sold)}</td>
           <td class="num">${r.unknown_printed || '<span class="muted">0</span>'}</td>
-          <td class="num"><span class="badge ${r.gap > 0 ? 'warn' : r.gap < 0 ? '' : 'ok'}">${r.gap === 0 ? 'Balanced' : `${r.gap > 0 ? '+' : ''}${round2(r.gap)} pages`}</span></td>
-          <td class="num">${r.estimated_value ? escapeHtml(cur(r.estimated_value)) : '<span class="muted">&mdash;</span>'}</td>
+          <td class="num">${r.no_data ? '<span class="badge" title="Print services were sold but no agent reported any printing this day">No print data</span>' : `<span class="badge ${r.gap > 0 ? 'warn' : r.gap < 0 ? '' : 'ok'}">${r.gap === 0 ? 'Balanced' : `${r.gap > 0 ? '+' : ''}${round2(r.gap)} pages`}</span>`}</td>
+          <td class="num">${!r.no_data && r.estimated_value ? escapeHtml(cur(r.estimated_value)) : '<span class="muted">&mdash;</span>'}</td>
         </tr>`).join('')}
       </tbody>
     </table>`;
+}
+
+function auditRow(s, extra) {
+  const pages = s.color_pages + s.mono_pages + s.unknown_pages;
+  return `<div class="list-row">
+    <div style="min-width:0;">
+      <div><strong>${escapeHtml(s.owner || 'Unknown user')}</strong>${s.machine ? ` <span class="muted">on ${escapeHtml(s.machine)}</span>` : ''}</div>
+      <div class="muted small">${escapeHtml(formatDbDate(s.ended_at))} · ${plural(s.job_count, 'job')} · ${plural(pages, 'page')} (${s.color_pages} colour, ${s.mono_pages} B&amp;W)</div>
+      ${extra || ''}
+    </div>
+    <span class="mono" style="white-space:nowrap;">${escapeHtml(cur(s.value))}</span>
+  </div>`;
+}
+
+function renderAudit(audit) {
+  $('audit-missing').innerHTML = audit.missing.length === 0
+    ? '<p class="muted" style="margin:0;">Every print session in this range is linked to or matched with a sale.</p>'
+    : `<div class="callout" style="margin-bottom:6px;"><strong>${plural(audit.missing_count, 'session')} · about ${escapeHtml(cur(audit.missing_value))} unbilled</strong></div>${audit.missing.map((s) => auditRow(s)).join('')}`;
+  $('audit-likely').innerHTML = audit.likely.length === 0
+    ? '<p class="muted" style="margin:0;">No hand-rung sales to pair with.</p>'
+    : audit.likely.map((s) => auditRow(s, `<div class="row" style="gap:6px; margin-top:6px;">
+        <a class="badge info" href="receipt.html?id=${s.match.sale.id}" target="_blank" rel="noopener">${escapeHtml(s.match.sale.receipt_no)}</a>
+        <span class="muted small">${Math.round(s.match.confidence * 100)}% match${s.match.sale.customer_name ? ` · till name "${escapeHtml(s.match.sale.customer_name)}"` : ''}</span>
+        <button type="button" class="btn btn-outline btn-sm" data-link-session="${s.id}" data-sale="${s.match.sale.id}">Confirm</button>
+      </div>`)).join('');
 }
 
 // ---------------------------------------------------------------
@@ -1177,10 +1329,25 @@ function setupProducts() {
   });
 }
 
+let productOutlook = new Map();
+
 async function loadProducts() {
-  const { products } = await api('GET', '/api/products?all=1');
+  const [{ products }, outlook] = await Promise.all([
+    api('GET', '/api/products?all=1'),
+    api('GET', '/api/insights/stock').catch(() => ({ products: [] }))
+  ]);
   productList = products;
+  productOutlook = new Map(outlook.products.map((o) => [o.id, o]));
   renderProducts();
+}
+
+function outlookCell(p) {
+  const o = productOutlook.get(p.id);
+  if (!p.track_stock || !o) return '<span class="muted">&mdash;</span>';
+  const status = STOCK_STATUS[o.status];
+  const days = o.days_left === null ? 'no recent sales' : o.status === 'out' ? 'out now' : `~${plural(Math.round(o.days_left), 'day')} left`;
+  return `<div>${status ? `<span class="badge ${status[1]}">${status[0]}</span> ` : ''}<span class="small">${escapeHtml(days)}</span></div>
+    ${o.suggested_order ? `<div class="muted small">Order ${o.suggested_order} (reorder at ${o.reorder_point})</div>` : o.daily_rate ? `<div class="muted small">~${o.daily_rate}/day</div>` : ''}`;
 }
 
 function renderProducts() {
@@ -1191,7 +1358,7 @@ function renderProducts() {
   if (list.length === 0) { wrap.innerHTML = emptyState('No products match.'); return; }
   wrap.innerHTML = `
     <table>
-      <thead><tr><th>Product</th><th>Category</th><th class="num">Price</th><th>Print service</th><th class="num">Stock</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Product</th><th>Category</th><th class="num">Price</th><th>Print service</th><th class="num">Stock</th><th>Outlook</th><th>Status</th><th></th></tr></thead>
       <tbody>${list.map((p) => {
         const low = p.track_stock && p.stock_qty <= p.reorder_level;
         return `<tr>
@@ -1200,6 +1367,7 @@ function renderProducts() {
           <td class="num">${escapeHtml(cur(p.price))}</td>
           <td>${p.print_color_mode === 'color' ? '<span class="badge info">Colour</span>' : p.print_color_mode === 'mono' ? '<span class="badge">B&amp;W</span>' : '<span class="muted">&mdash;</span>'}</td>
           <td class="num">${p.track_stock ? `<span class="${low ? 'badge warn' : ''}">${p.stock_qty}</span>` : '<span class="muted">Not tracked</span>'}</td>
+          <td>${outlookCell(p)}</td>
           <td>${statusBadge(p.active, 'Active', 'Inactive')}</td>
           <td><div class="actions">
             <button type="button" class="btn btn-outline btn-sm" data-act="edit" data-id="${p.id}">Edit</button>
@@ -1418,6 +1586,8 @@ function fillSettingsForm() {
   $('s-currency').value = s.currency;
   $('s-receipt-prefix').value = s.receipt_prefix;
   $('s-footer').value = s.footer_note;
+  $('s-lead').value = s.reorder_lead_days;
+  $('s-cover').value = s.reorder_cover_days;
   pendingLogo = undefined;
   $('s-logo').value = '';
   showLogoPreview(s.logo_data_url);
@@ -1461,6 +1631,8 @@ function setupSettings() {
         currency: $('s-currency').value.trim(),
         receipt_prefix: $('s-receipt-prefix').value.trim(),
         footer_note: $('s-footer').value.trim(),
+        reorder_lead_days: parseInt($('s-lead').value, 10),
+        reorder_cover_days: parseInt($('s-cover').value, 10),
         logo_data_url: pendingLogo === undefined ? currentSettings.logo_data_url : pendingLogo
       });
       await loadSettings();

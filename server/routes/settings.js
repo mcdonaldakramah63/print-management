@@ -14,6 +14,12 @@ router.put('/', requireAdmin, (req, res) => {
     business_name, address, phone, email,
     logo_data_url, tax_rate, currency, footer_note, receipt_prefix
   } = req.body;
+  const current = db.prepare('SELECT reorder_lead_days, reorder_cover_days FROM settings WHERE id = 1').get();
+  const leadDays = req.body.reorder_lead_days === undefined ? current.reorder_lead_days : Number(req.body.reorder_lead_days);
+  const coverDays = req.body.reorder_cover_days === undefined ? current.reorder_cover_days : Number(req.body.reorder_cover_days);
+  if (!Number.isInteger(leadDays) || leadDays < 1 || leadDays > 90 || !Number.isInteger(coverDays) || coverDays < 1 || coverDays > 180) {
+    return res.status(400).json({ error: 'Lead time must be 1–90 days and order cover 1–180 days' });
+  }
 
   if (typeof business_name !== 'string' || !business_name.trim()) {
     return res.status(400).json({ error: 'Business name is required' });
@@ -31,11 +37,13 @@ router.put('/', requireAdmin, (req, res) => {
   db.prepare(`
     UPDATE settings SET
       business_name = ?, address = ?, phone = ?, email = ?,
-      logo_data_url = ?, tax_rate = ?, currency = ?, footer_note = ?, receipt_prefix = ?
+      logo_data_url = ?, tax_rate = ?, currency = ?, footer_note = ?, receipt_prefix = ?,
+      reorder_lead_days = ?, reorder_cover_days = ?
     WHERE id = 1
   `).run(
     business_name.trim(), address || '', phone || '', email || '',
-    logo_data_url || '', rate, currency || 'GHS', footer_note || '', receipt_prefix || 'RCT'
+    logo_data_url || '', rate, currency || 'GHS', footer_note || '', receipt_prefix || 'RCT',
+    leadDays, coverDays
   );
 
   res.json({ ok: true });

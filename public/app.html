@@ -52,9 +52,10 @@
       <div class="grid grid-4" id="dash-kpis"></div>
       <div class="grid grid-2-1">
         <div class="card">
-          <div class="card-head"><h2>Revenue, last 14 days</h2></div>
-          <div class="bar-chart" id="dash-chart" role="img" aria-label="Revenue per day for the last 14 days"></div>
+          <div class="card-head"><h2>Revenue and 7-day forecast</h2><span class="muted small" id="forecast-note"></span></div>
+          <div class="bar-chart forecast-chart" id="dash-chart" role="img" aria-label="Daily revenue for recent weeks and forecast for the next 7 days"></div>
           <div class="bar-axis" id="dash-chart-axis"></div>
+          <div class="chart-legend"><span><i class="lg actual"></i>Actual</span><span><i class="lg fc"></i>Forecast</span><span><i class="lg range"></i>Likely range (80%)</span></div>
         </div>
         <div class="card stack">
           <h2>Payment mix today</h2>
@@ -62,13 +63,17 @@
           <div id="dash-print-callout"></div>
         </div>
       </div>
+      <div class="card stack admin-only" id="risk-card">
+        <div class="spread"><h2>Risk alerts</h2><span class="muted small">Last 30 days · adjusted for sample size, compared like with like</span></div>
+        <div id="risk-list"></div>
+      </div>
       <div class="grid grid-2">
         <div class="card">
           <div class="card-head"><h2>Top items, last 30 days</h2></div>
           <div id="dash-top"></div>
         </div>
         <div class="card">
-          <div class="card-head"><h2>Low stock</h2></div>
+          <div class="card-head"><h2>Stock outlook</h2><span class="muted small">Forecast from recent sales</span></div>
           <div id="dash-low"></div>
         </div>
       </div>
@@ -105,6 +110,7 @@
           </div>
           <div id="cart-sessions" class="chips"></div>
           <div class="cart-lines" id="cart-lines"></div>
+          <div id="cart-suggestions" class="stack" style="gap:6px;" hidden></div>
           <div class="discount-row">
             <div class="field"><label for="discount-value">Discount</label><input id="discount-value" type="number" min="0" step="0.01" value="0"></div>
             <div class="field"><label for="discount-type">Type</label><select id="discount-type"><option value="amount">Amount</option><option value="percent">Percent</option></select></div>
@@ -239,6 +245,16 @@
       </div>
       <div id="rec-setup"></div>
       <div class="grid grid-4" id="rec-kpis"></div>
+      <div class="grid grid-2">
+        <div class="card stack">
+          <div><h2>No matching sale found</h2><p class="muted small" style="margin:4px 0 0;">Print sessions with no linked sale and no plausible hand-rung sale. These are the prints most likely never paid for.</p></div>
+          <div id="audit-missing"></div>
+        </div>
+        <div class="card stack">
+          <div><h2>Probably rung up by hand</h2><p class="muted small" style="margin:4px 0 0;">Unlinked sessions paired with a sale by pages, time and customer name (optimal matching). Confirm to link them.</p></div>
+          <div id="audit-likely"></div>
+        </div>
+      </div>
       <div class="card"><div class="table-wrap" id="rec-table"></div>
         <p class="muted small" style="margin:12px 0 0;">Colour detection depends on each printer's driver. Pages with an unknown colour mode are listed separately and not counted in the gap.</p></div>
     </section>
@@ -278,6 +294,8 @@
           <div class="field"><label for="s-currency">Currency</label><input id="s-currency" placeholder="GHS"></div>
           <div class="field"><label for="s-receipt-prefix">Receipt number prefix</label><input id="s-receipt-prefix" placeholder="RCT"></div>
           <div class="field"><label for="s-footer">Receipt footer note</label><input id="s-footer" placeholder="Thank you for your patronage!"></div>
+          <div class="field"><label for="s-lead">Supplier lead time (days)</label><input id="s-lead" type="number" min="1" max="90" step="1" required></div>
+          <div class="field"><label for="s-cover">Each order should cover (days)</label><input id="s-cover" type="number" min="1" max="180" step="1" required></div>
           <div class="field full">
             <label for="s-logo">Logo (optional, under 1.5 MB)</label>
             <div class="row"><input id="s-logo" type="file" accept="image/*"><button class="btn btn-ghost btn-sm" type="button" id="s-logo-remove">Remove logo</button></div>

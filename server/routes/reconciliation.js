@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { round2 } = require('../lib/saleCreator');
 const { SALE_DAY, isDateString, localDateString, daysAgo } = require('../lib/dates');
+const { matchUnbilledSessions } = require('../lib/insights/matching');
 
 const router = express.Router();
 
@@ -55,8 +56,13 @@ function reconcile(from, to) {
   const rows = [...days.values()].sort((a, b) => (a.day < b.day ? 1 : -1)).map((r) => {
     const colorGap = r.color_printed - r.color_sold;
     const monoGap = r.mono_printed - r.mono_sold;
+    // Print-service sales but not a single page reported: the agent wasn't
+    // running (not installed yet, PC off, offline). Comparing would show a
+    // huge false "oversold" gap, so the day is shown but left out of totals.
+    const noData = r.color_printed + r.mono_printed + r.unknown_printed === 0 && r.color_sold + r.mono_sold > 0;
     return {
       ...r,
+      no_data: noData,
       color_gap: colorGap,
       mono_gap: monoGap,
       gap: colorGap + monoGap,
@@ -66,11 +72,12 @@ function reconcile(from, to) {
     };
   });
 
-  const totals = rows.reduce((t, r) => {
+  const totals = rows.filter((r) => !r.no_data).reduce((t, r) => {
     for (const k of ['color_printed', 'color_sold', 'mono_printed', 'mono_sold', 'unknown_printed', 'gap', 'estimated_value']) t[k] += r[k];
     return t;
   }, { color_printed: 0, color_sold: 0, mono_printed: 0, mono_sold: 0, unknown_printed: 0, gap: 0, estimated_value: 0 });
   totals.estimated_value = round2(totals.estimated_value);
+  totals.no_data_days = rows.filter((r) => r.no_data).length;
 
   const printServices = db.prepare(`
     SELECT id, name, price, print_color_mode FROM products WHERE active = 1 AND print_color_mode IS NOT NULL ORDER BY name
@@ -86,10 +93,40 @@ function reconcile(from, to) {
   return { from, to, rows, totals, sessions, prices: { color: round2(prices.color), mono: round2(prices.mono) }, printServices };
 }
 
+// Unbilled sessions split into "probably rung up by hand" (matched to a sale)
+// and "no plausible sale found", with the value of each.
+function sessionAudit(from, to, prices) {
+  const matches = matchUnbilledSessions(from, to);
+  const unbilled = db.prepare(`
+    SELECT ps.id, ps.owner, ps.machine, ps.started_at, ps.ended_at, ps.job_count, ps.color_pages, ps.mono_pages,
+           ps.unknown_pages, ps.flags, a.label AS agent_label
+    FROM print_sessions ps JOIN agents a ON a.id = ps.agent_id
+    WHERE ps.sale_id IS NULL AND ps.id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ?)
+    ORDER BY ps.ended_at DESC
+  `).all(from, to);
+  const value = (s) => round2(s.color_pages * prices.color + s.mono_pages * prices.mono);
+  const parse = (f) => { try { return JSON.parse(f); } catch (_) { return []; } };
+  const likely = [];
+  const missing = [];
+  for (const s of unbilled) {
+    const row = { ...s, flags: parse(s.flags), value: value(s) };
+    const m = matches.get(s.id);
+    if (m) likely.push({ ...row, match: m }); else missing.push(row);
+  }
+  return {
+    likely,
+    missing: missing.slice(0, 100),
+    missing_count: missing.length,
+    missing_value: round2(missing.reduce((n, s) => n + s.value, 0))
+  };
+}
+
 router.get('/', requireAdmin, (req, res) => {
   const from = isDateString(req.query.from) ? req.query.from : daysAgo(13);
   const to = isDateString(req.query.to) ? req.query.to : localDateString();
-  res.json(from <= to ? reconcile(from, to) : reconcile(to, from));
+  const [a, b] = from <= to ? [from, to] : [to, from];
+  const result = reconcile(a, b);
+  res.json({ ...result, audit: sessionAudit(a, b, result.prices) });
 });
 
 module.exports = { router, reconcile };
