@@ -1,0 +1,169 @@
+/* A5 receipt layout. Screen preview mimics the page; @media print
+   strips away the chrome so only the receipt itself prints. */
+
+:root {
+  --ink: #201f1b;
+  --ink-soft: #5a5548;
+  --line: #ddd0ac;
+  --accent: #1f4d3c;
+  --serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --mono: 'IBM Plex Mono', 'Courier New', Courier, monospace;
+}
+
+* { box-sizing: border-box; }
+
+/* This page has two layers with deliberately different identities:
+   the on-screen CHROME (this toolbar + the dark surrounding background)
+   matches the app's dark console theme, while the .receipt-page itself
+   stays a light paper look, since that's what actually gets printed —
+   a dark receipt would waste ink/toner and just looks wrong on paper. */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0b0f17;
+  font-family: var(--sans);
+  color: var(--ink);
+}
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  background: #080f17;
+  border-bottom: 1px solid #374151;
+  color: #f9fafb;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 10;
+}
+.toolbar .title { font-size: 14px; }
+.toolbar .actions { display: flex; gap: 10px; }
+.toolbar button {
+  padding: 8px 16px;
+  border-radius: 3px;
+  border: 1px solid #f9fafb;
+  background: transparent;
+  color: #f9fafb;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toolbar button.primary { background: #f9fafb; color: var(--ink); }
+
+.page-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 30px 16px 60px;
+}
+
+/* A5 = 148mm x 210mm. The page is a fixed-height flex column with content
+   pushed to the bottom, leaving the top of the sheet blank — per request,
+   the receipt starts low on the page rather than at the top. If a receipt
+   has enough line items to exceed one page, it'll overflow onto a second
+   printed page as normal rather than being cut off. */
+.receipt-page {
+  width: 148mm;
+  height: 210mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: #fff;
+  box-shadow: 0 2px 14px rgba(0,0,0,0.18);
+  padding: 12mm 10mm;
+}
+
+.r-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+}
+.r-business { display: flex; gap: 10px; align-items: center; }
+.r-logo { width: 42px; height: 42px; object-fit: contain; }
+.r-business h1 { font-family: var(--serif); font-size: 17px; margin: 0; line-height: 1.2; }
+.r-business .meta { font-size: 10.5px; color: var(--ink-soft); line-height: 1.35; margin-top: 2px; }
+
+.r-doc-label { text-align: right; }
+.r-doc-label .type { font-family: var(--serif); font-size: 13px; letter-spacing: 0.03em; color: var(--accent); }
+.r-doc-label .no { font-family: var(--mono); font-size: 11px; margin-top: 3px; }
+.r-doc-label .date { font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; }
+
+.r-voided-stamp {
+  display: inline-block;
+  margin-top: 6px;
+  color: #a33327;
+  border: 2px solid #a33327;
+  padding: 1px 8px;
+  font-weight: 700;
+  transform: rotate(-4deg);
+  font-size: 11px;
+}
+
+.r-parties {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  margin-bottom: 14px;
+}
+.r-parties .label { color: var(--ink-soft); font-size: 10px; margin-bottom: 2px; }
+
+table.r-items { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 10.5px; }
+table.r-items thead th {
+  text-align: left;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  padding: 5px 3px;
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+table.r-items td { padding: 5px 3px; border-bottom: 1px dashed var(--line); vertical-align: top; }
+table.r-items th.num, table.r-items td.num { text-align: right; }
+
+.r-totals { margin-top: 4px; margin-left: auto; width: 100%; max-width: 62mm; font-size: 11px; }
+.r-totals .row { display: flex; justify-content: space-between; padding: 3px 0; }
+.r-totals .row.grand {
+  border-top: 1px solid var(--ink);
+  margin-top: 5px;
+  padding-top: 6px;
+  font-weight: 700;
+  font-size: 13.5px;
+  font-family: var(--serif);
+}
+
+.r-footer {
+  margin-top: 26px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+.r-footer .thanks { font-family: var(--serif); font-size: 12px; color: var(--ink); margin-bottom: 3px; }
+
+.r-cashier {
+  margin-top: 16px;
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+
+@media print {
+  .toolbar { display: none; }
+  .page-wrap { padding: 0; }
+  body { background: #fff; }
+  .receipt-page {
+    box-shadow: none;
+    width: auto;
+    /* height stays fixed at 210mm (not auto) so the bottom-alignment
+       above actually pushes content down on the physical page */
+    padding: 10mm 10mm;
+  }
+  @page {
+    size: A5;
+    margin: 0;
+  }
+}

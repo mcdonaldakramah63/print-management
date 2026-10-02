@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in · Vicamp Print OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Round">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --surface: #0d141d; --surface-container-low: #151c25;
+    --surface-container: #192029; --outline-variant: #3c4a42;
+    --on-surface: #dce3f0; --on-surface-variant: #bbcabf;
+    --primary: #4edea3; --on-primary: #003824; --primary-container: #10b981;
+    --error: #ffb4ab; --outline: #86948a;
+    --font-h: 'Plus Jakarta Sans', sans-serif;
+    --font-b: 'Inter', sans-serif;
+  }
+  html, body {
+    height: 100%; background: var(--surface);
+    font-family: var(--font-b); color: var(--on-surface);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background-image: radial-gradient(ellipse at 60% 20%, rgba(78,222,163,.06) 0%, transparent 60%);
+  }
+  .login-wrap { width: 380px; }
+  .login-brand { text-align: center; margin-bottom: 32px; }
+  .login-logo {
+    width: 56px; height: 56px; border-radius: 16px;
+    background: rgba(78,222,163,.12); border: 1px solid rgba(78,222,163,.25);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 16px;
+    color: var(--primary); font-size: 28px;
+  }
+  .login-brand h1 {
+    font-family: var(--font-h); font-size: 22px; font-weight: 800;
+    color: var(--on-surface); letter-spacing: -.01em;
+  }
+  .login-brand .sub { font-size: 13px; color: var(--on-surface-variant); margin-top: 4px; }
+  .card {
+    background: var(--surface-container-low);
+    border: 1px solid var(--outline-variant);
+    border-radius: 16px; padding: 28px;
+    box-shadow: 0 24px 48px rgba(0,0,0,.4);
+  }
+  .field { margin-bottom: 16px; }
+  label { display: block; font-size: 11px; font-weight: 700; color: var(--on-surface-variant); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; }
+  input {
+    width: 100%; background: var(--surface-container);
+    border: 1px solid var(--outline-variant);
+    border-radius: 8px; color: var(--on-surface);
+    font-family: var(--font-b); font-size: 14px;
+    padding: 10px 13px; outline: none;
+    transition: border-color .15s;
+  }
+  input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(78,222,163,.1); }
+  input::placeholder { color: var(--outline); }
+  .btn {
+    width: 100%; padding: 11px 16px;
+    background: var(--primary); color: var(--on-primary);
+    border: none; border-radius: 8px;
+    font-family: var(--font-h); font-size: 14px; font-weight: 700;
+    cursor: pointer; transition: opacity .15s; margin-top: 4px;
+  }
+  .btn:hover { opacity: .88; }
+  .error-text { color: var(--error); font-size: 12.5px; margin-top: 10px; display: none; text-align: center; }
+  .hint { margin-top: 18px; font-size: 12px; color: var(--on-surface-variant); text-align: center; }
+  .hint strong { color: var(--on-surface); }
+  .login-card-header { margin-bottom: 20px; }
+  .login-card-header h2 { font-family: var(--font-h); font-size: 16px; font-weight: 700; }
+  .login-card-header p { font-size: 12.5px; color: var(--on-surface-variant); margin-top: 3px; }
+  .mat-icon { font-family: 'Material Icons Round'; font-style: normal; font-weight: normal; font-size: 28px; display: inline-flex; align-items: center; justify-content: center; }
+</style>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-brand">
+      <div class="login-logo"><span class="mat-icon">print</span></div>
+      <h1>Vicamp Print OS</h1>
+      <div class="sub">Operational Receipt &amp; Print Management</div>
+    </div>
+    <div class="card">
+      <div class="login-card-header">
+        <h2>Sign in to your account</h2>
+        <p>Enter your credentials to access the terminal</p>
+      </div>
+      <form id="login-form">
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" autocomplete="username" placeholder="e.g. admin" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+        </div>
+        <button class="btn" type="submit">Sign in &rarr;</button>
+        <div class="error-text" id="login-error"></div>
+      </form>
+    </div>
+    <div class="hint">Default: <strong>admin</strong> / <strong>admin123</strong> &mdash; change after first login.</div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('login-error');
+      errorEl.style.display = 'none';
+      try {
+        await api('POST', '/api/auth/login', {
+          username: document.getElementById('username').value.trim(),
+          password: document.getElementById('password').value
+        });
+        window.location.href = 'app.html';
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+      }
+    });
+    api('GET', '/api/auth/me').then(d => { if (d.user) window.location.href = 'app.html'; });
+  </script>
+</body>
+</html>

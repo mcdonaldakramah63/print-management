@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receipt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/print.css">
+</head>
+<body>
+  <div class="toolbar">
+    <div class="title" id="toolbar-title">Receipt</div>
+    <div class="actions">
+      <button id="back-btn">&larr; Back to app</button>
+      <button class="primary" id="print-btn">Print</button>
+    </div>
+  </div>
+
+  <div class="page-wrap">
+    <div class="receipt-page" id="receipt-root">
+      <div class="empty-state" style="text-align:center; padding:60px 0; color:#888;">Loading receipt&hellip;</div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/receipt.js"></script>
+</body>
+</html>
