@@ -20,6 +20,7 @@
     test_page       print the Windows test page
     clear_queue     remove every job
     set_defaults    default sides / colour / paper size for new jobs
+    capabilities    what one printer can do (driver print capabilities, paper, driver)
 
   Job actions name the job they expect (id + document name). The spooler
   reuses job ids, so a job that has changed since the request was made is
@@ -113,6 +114,58 @@ function Get-Snapshot {
   return ,$out
 }
 
+# What this printer can do: the driver's print capabilities (Print Schema),
+# Windows' capability list and paper names, driver and sharing details.
+function Get-Capabilities([string]$name) {
+  $p = Get-WmiPrinter $name
+  $driver = $null
+  try { $driver = Get-PrinterDriver -Name $p.DriverName -ErrorAction Stop | Select-Object -First 1 } catch {}
+  $driverVersion = ""
+  if ($driver -and $driver.DriverVersion) {
+    $v = [uint64]$driver.DriverVersion
+    $driverVersion = "{0}.{1}.{2}.{3}" -f ($v -shr 48), (($v -shr 32) -band 0xFFFF), (($v -shr 16) -band 0xFFFF), ($v -band 0xFFFF)
+  }
+  $features = @()
+  try {
+    $pc = Get-PrintConfiguration -PrinterName $name
+    [xml]$x = $pc.PrintCapabilitiesXML
+    $ns = New-Object System.Xml.XmlNamespaceManager($x.NameTable)
+    $ns.AddNamespace('psf', 'http://schemas.microsoft.com/windows/2003/08/printing/printschemaframework')
+    foreach ($f in $x.SelectNodes('/psf:PrintCapabilities/psf:Feature', $ns)) {
+      $opts = @()
+      foreach ($o in $f.SelectNodes('psf:Option', $ns)) {
+        $odn = $o.SelectSingleNode("psf:Property[contains(@name,'DisplayName')]/psf:Value", $ns)
+        $opts += [ordered]@{ name = "$($o.GetAttribute('name'))"; label = $(if ($odn) { "$($odn.InnerText)" } else { "" }) }
+        if ($opts.Count -ge 40) { break }
+      }
+      $fdn = $f.SelectSingleNode("psf:Property[contains(@name,'DisplayName')]/psf:Value", $ns)
+      $features += [ordered]@{ name = "$($f.GetAttribute('name'))"; label = $(if ($fdn) { "$($fdn.InnerText)" } else { "" }); options = $opts }
+      if ($features.Count -ge 60) { break }
+    }
+  } catch {}
+  $props = @()
+  try {
+    foreach ($pp in @(Get-PrinterProperty -PrinterName $name)) {
+      $props += [ordered]@{ name = "$($pp.PropertyName)"; value = "$($pp.Value)" }
+      if ($props.Count -ge 80) { break }
+    }
+  } catch {}
+  return [ordered]@{
+    capabilities = @($p.CapabilityDescriptions | ForEach-Object { "$_" })
+    paper_names  = @($p.PrinterPaperNames | ForEach-Object { "$_" } | Select-Object -First 60)
+    resolution   = [ordered]@{ x = [int]$p.HorizontalResolution; y = [int]$p.VerticalResolution }
+    location     = "$($p.Location)"
+    comment      = "$($p.Comment)"
+    shared       = [bool]$p.Shared
+    share_name   = "$($p.ShareName)"
+    port         = "$($p.PortName)"
+    network      = [bool]$p.Network
+    driver       = [ordered]@{ name = "$($p.DriverName)"; manufacturer = $(if ($driver) { "$($driver.Manufacturer)" } else { "" }); version = $driverVersion }
+    features     = $features
+    properties   = $props
+  }
+}
+
 function Find-Job([string]$printer, $params) {
   $id = [int]$params.job_id
   $job = Get-PrintJob -PrinterName $printer -ID $id -ErrorAction SilentlyContinue
@@ -132,6 +185,7 @@ function Invoke-Action($req) {
   }
   switch ("$($req.action)") {
     'snapshot'       { return ,(Get-Snapshot) }
+    'capabilities'   { return (Get-Capabilities $printer) }
     'cancel_job'     { Remove-PrintJob -InputObject (Find-Job $printer $params); return @{ done = $true } }
     'pause_job'      { Suspend-PrintJob -InputObject (Find-Job $printer $params); return @{ done = $true } }
     'resume_job'     { Resume-PrintJob -InputObject (Find-Job $printer $params); return @{ done = $true } }

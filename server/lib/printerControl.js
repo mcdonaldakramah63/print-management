@@ -19,6 +19,8 @@
 // ---------------------------------------------------------------
 const db = require('../db');
 const { diagnose, STALE_MS } = require('./printerDoctor');
+const { deriveFeatures, settingProblem } = require('./printerFeatures');
+const { localDateString } = require('./dates');
 
 const ACTIONS = {
   cancel_job: { role: 'cashier', job: true, ttlSec: 120, verb: 'Cancel' },
@@ -30,8 +32,10 @@ const ACTIONS = {
   set_online: { role: 'cashier', ttlSec: 300, verb: 'Bring online' },
   test_page: { role: 'cashier', ttlSec: 120, verb: 'Print test page' },
   clear_queue: { role: 'admin', ttlSec: 120, verb: 'Clear queue' },
-  set_defaults: { role: 'admin', ttlSec: 300, verb: 'Change defaults' }
+  set_defaults: { role: 'admin', ttlSec: 300, verb: 'Change defaults' },
+  printer_info: { role: 'cashier', ttlSec: 180, verb: 'Read printer features' }
 };
+const INFO_MAX_AGE_MS = 6 * 3600 * 1000;
 const OPPOSITE = { pause_printer: 'resume_printer', resume_printer: 'pause_printer', pause_job: 'resume_job', resume_job: 'pause_job' };
 const DUPLEX = ['OneSided', 'TwoSidedLongEdge', 'TwoSidedShortEdge'];
 const PAPER = ['A4', 'A3', 'A5', 'Letter', 'Legal'];
@@ -72,7 +76,12 @@ function allowedActions(role) {
 
 function latestState(agentId, printer) {
   const row = db.prepare('SELECT data, updated_at FROM printer_states WHERE agent_id = ? AND printer_name = ?').get(agentId, printer);
-  return row ? { ...parse(row.data, {}), updated_at: row.updated_at } : null;
+  return row ? { ...parse(row.data, {}), updated_at: row.updated_at, agent_id: agentId, name: printer } : null;
+}
+
+function storedInfo(agentId, printer) {
+  const row = db.prepare('SELECT data, updated_at FROM printer_info WHERE agent_id = ? AND printer_name = ?').get(agentId, printer);
+  return row ? { data: parse(row.data, null), updated_at: row.updated_at } : null;
 }
 
 function cleanParams(action, params, state) {
@@ -97,6 +106,10 @@ function cleanParams(action, params, state) {
       out.paper_size = p.paper_size;
     }
     if (Object.keys(out).length === 0) throw new ControlError('Nothing to change');
+    // Only settings this particular printer supports.
+    const info = storedInfo(state.agent_id, state.name);
+    const problem = info && settingProblem(deriveFeatures(info.data, state), out);
+    if (problem) throw new ControlError(problem, 409);
     return out;
   }
   if (action === 'clear_queue' && !(state.jobs || []).length) throw new ControlError('The queue is already empty.', 409);
@@ -210,9 +223,15 @@ function agentSync(agentId, body, nowMs = Date.now()) {
     for (const r of results) {
       const id = Number(r && r.id);
       if (!Number.isInteger(id)) continue;
-      const row = db.prepare('SELECT status FROM printer_commands WHERE id = ? AND agent_id = ?').get(id, agentId);
+      const row = db.prepare('SELECT status, action, printer_name FROM printer_commands WHERE id = ? AND agent_id = ?').get(id, agentId);
       if (!row) { acked.push(r.id); continue; }
       // The agent's word is final: it ran (or skipped) the command.
+      if (row.status !== 'done' && r.ok && row.action === 'printer_info' && r.data) {
+        db.prepare(`
+          INSERT INTO printer_info (agent_id, printer_name, data, updated_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT (agent_id, printer_name) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+        `).run(agentId, row.printer_name, JSON.stringify(r.data).slice(0, 400000), now);
+      }
       if (row.status !== 'done') {
         finish.run(r.ok ? 'done' : r.expired ? 'expired' : 'failed', r.data === undefined ? null : JSON.stringify(r.data),
           r.ok ? null : String(r.error || 'Failed').slice(0, 300), now, id, agentId);
@@ -236,52 +255,118 @@ function agentSync(agentId, body, nowMs = Date.now()) {
   return { commands, acked, watch: isWatched(nowMs) };
 }
 
-/** Every printer with its diagnosis, queue, pending and recent actions. */
-function listPrinters(role, nowMs = Date.now()) {
-  expireOld(nowMs);
-  const rows = db.prepare(`
-    SELECT ps.agent_id, ps.printer_name, ps.data, ps.updated_at, a.label AS agent_label
-    FROM printer_states ps JOIN agents a ON a.id = ps.agent_id
-    WHERE a.active = 1 ORDER BY a.label, ps.printer_name
-  `).all();
-  const historyFor = db.prepare(`
+function printerView(r, role, nowMs) {
+  const state = parse(r.data, {});
+  const history = db.prepare(`
     SELECT at, data FROM printer_state_history WHERE agent_id = ? AND printer_name = ? AND at >= ? ORDER BY id
-  `);
-  const commandsFor = db.prepare(`
+  `).all(r.agent_id, r.printer_name, iso(nowMs - 3600 * 1000)).map((h) => ({ at: h.at, ...parse(h.data, {}) }));
+  const d = diagnose(state, { updated_at: r.updated_at, now: nowMs }, history);
+  const cmds = db.prepare(`
     SELECT c.*, u.full_name AS requested_by_name FROM printer_commands c LEFT JOIN users u ON u.id = c.requested_by
     WHERE c.agent_id = ? AND c.printer_name = ? AND (c.status IN ('queued','sent') OR c.finished_at >= ?)
     ORDER BY c.id DESC LIMIT 12
-  `);
-  const actions = allowedActions(role);
-  return rows.map((r) => {
-    const state = parse(r.data, {});
-    const history = historyFor.all(r.agent_id, r.printer_name, iso(nowMs - 3600 * 1000)).map((h) => ({ at: h.at, ...parse(h.data, {}) }));
-    const d = diagnose(state, { updated_at: r.updated_at, now: nowMs }, history);
-    const cmds = commandsFor.all(r.agent_id, r.printer_name, iso(nowMs - 15 * 60 * 1000)).map(shapeCommand);
-    const device = state.device || null;
-    return {
-      key: `${r.agent_id}:${r.printer_name}`,
-      agent_id: r.agent_id,
-      agent_label: r.agent_label,
-      name: r.printer_name,
-      host: state.host || null,
-      driver: state.driver || '',
-      is_default: !!state.is_default,
-      updated_at: r.updated_at,
-      stale: nowMs - Date.parse(r.updated_at) > STALE_MS,
-      health: d.health,
-      headline: d.headline,
-      issues: d.issues,
-      queue: d.queue,
-      speed: d.speed,
-      screen: d.screen,
-      config: state.config || null,
-      device: device && { reachable: device.reachable, status: device.status, trays: device.trays || [], covers: device.covers || [], alerts: device.alerts || [], errors: device.errors || [] },
-      pending: cmds.filter((c) => c.status === 'queued' || c.status === 'sent'),
-      recent: cmds.filter((c) => c.status !== 'queued' && c.status !== 'sent').slice(0, 5),
-      actions
-    };
-  });
+  `).all(r.agent_id, r.printer_name, iso(nowMs - 15 * 60 * 1000)).map(shapeCommand);
+  const device = state.device || null;
+  return {
+    key: `${r.agent_id}:${r.printer_name}`,
+    agent_id: r.agent_id,
+    agent_label: r.agent_label,
+    name: r.printer_name,
+    host: state.host || null,
+    driver: state.driver || '',
+    is_default: !!state.is_default,
+    updated_at: r.updated_at,
+    stale: nowMs - Date.parse(r.updated_at) > STALE_MS,
+    health: d.health,
+    headline: d.headline,
+    issues: d.issues,
+    queue: d.queue,
+    speed: d.speed,
+    stalled_job_id: d.stalled_job_id,
+    screen: d.screen,
+    config: state.config || null,
+    device: device && { reachable: device.reachable, status: device.status, trays: device.trays || [], covers: device.covers || [], alerts: device.alerts || [], errors: device.errors || [] },
+    pending: cmds.filter((c) => c.status === 'queued' || c.status === 'sent'),
+    recent: cmds.filter((c) => c.status !== 'queued' && c.status !== 'sent').slice(0, 5),
+    actions: allowedActions(role)
+  };
 }
 
-module.exports = { ACTIONS, ControlError, enqueue, agentSync, listPrinters, getCommand, markViewed, isWatched, allowedActions };
+const PRINTER_ROWS = `
+  SELECT ps.agent_id, ps.printer_name, ps.data, ps.updated_at, a.label AS agent_label
+  FROM printer_states ps JOIN agents a ON a.id = ps.agent_id
+  WHERE a.active = 1
+`;
+
+/** Every printer with its diagnosis, queue, pending and recent actions. */
+function listPrinters(role, nowMs = Date.now()) {
+  expireOld(nowMs);
+  return db.prepare(`${PRINTER_ROWS} ORDER BY a.label, ps.printer_name`).all().map((r) => printerView(r, role, nowMs));
+}
+
+/** Ask the agent for a printer's features (no user behind it; never duplicated). */
+function requestInfo(agentId, printer, nowMs = Date.now()) {
+  const pending = db.prepare(`
+    SELECT id FROM printer_commands WHERE agent_id = ? AND printer_name = ? AND action = 'printer_info' AND status IN ('queued','sent')
+  `).get(agentId, printer);
+  if (pending) return pending.id;
+  return db.prepare(`
+    INSERT INTO printer_commands (agent_id, printer_name, action, params, target_key, created_at, expires_at)
+    VALUES (?, ?, 'printer_info', '{}', 'info', ?, ?)
+  `).run(agentId, printer, iso(nowMs), iso(nowMs + ACTIONS.printer_info.ttlSec * 1000)).lastInsertRowid;
+}
+
+/** One printer in full: panel, features, settings it supports, supplies, activity. */
+function printerDetail(agentId, printer, role, { refresh = false, nowMs = Date.now() } = {}) {
+  expireOld(nowMs);
+  const r = db.prepare(`${PRINTER_ROWS} AND ps.agent_id = ? AND ps.printer_name = ?`).get(agentId, printer);
+  if (!r) return null;
+  const view = printerView(r, role, nowMs);
+  const state = { ...parse(r.data, {}), agent_id: agentId, name: printer };
+  const info = storedInfo(agentId, printer);
+  // Features are read on demand: when first opened, when older than 6 hours, or on request.
+  let infoPending = view.pending.some((c) => c.action === 'printer_info');
+  if (!view.stale && (refresh || !info || nowMs - Date.parse(info.updated_at) > INFO_MAX_AGE_MS)) {
+    requestInfo(agentId, printer, nowMs);
+    infoPending = true;
+  }
+
+  let supplies = [];
+  try {
+    const toner = require('./insights/toner').tonerStatus().find((t) => t.printer === printer);
+    if (toner) supplies = toner.supplies;
+  } catch (_) { /* toner levels are optional */ }
+  const copies = db.prepare(`
+    SELECT COALESCE(SUM(pages), 0) AS pages FROM copy_events
+    WHERE printer_name = ? AND status IN ('open','billed') AND julianday(started_at) >= julianday('now', '-30 days')
+  `).get(printer).pages;
+  const today = localDateString();
+  const jobsToday = db.prepare(`
+    SELECT COUNT(*) AS jobs, COALESCE(SUM(COALESCE(impressions, pages)), 0) AS pages,
+      COALESCE(SUM(CASE WHEN color_mode = 'color' THEN COALESCE(impressions, pages) ELSE 0 END), 0) AS colour_pages,
+      COALESCE(SUM(CASE WHEN duplex = 'duplex' THEN 1 ELSE 0 END), 0) AS two_sided_jobs,
+      COALESCE(SUM(COALESCE(sheets, impressions, pages)), 0) AS sheets
+    FROM print_jobs WHERE agent_id = ? AND printer_name = ? AND substr(submitted_at, 1, 10) = ?
+  `).get(agentId, printer, today);
+  const copiesToday = db.prepare(`
+    SELECT COALESCE(SUM(pages), 0) AS pages FROM copy_events WHERE printer_name = ? AND status IN ('open','billed') AND substr(started_at, 1, 10) = ?
+  `).get(printer, today).pages;
+  const log = db.prepare(`
+    SELECT c.*, u.full_name AS requested_by_name FROM printer_commands c LEFT JOIN users u ON u.id = c.requested_by
+    WHERE c.agent_id = ? AND c.printer_name = ? AND c.action != 'printer_info' ORDER BY c.id DESC LIMIT 25
+  `).all(agentId, printer).map(shapeCommand);
+
+  const derived = deriveFeatures(info && info.data, state, { speed: view.speed, supplies, copies });
+  return {
+    printer: view,
+    info_updated_at: info ? info.updated_at : null,
+    info_pending: infoPending,
+    info_error: info && info.data && info.data.device && info.data.device.error ? info.data.device.error : null,
+    ...derived,
+    supplies,
+    today: { ...jobsToday, copied_pages: copiesToday },
+    log
+  };
+}
+
+module.exports = { ACTIONS, ControlError, enqueue, agentSync, listPrinters, printerDetail, requestInfo, getCommand, markViewed, isWatched, allowedActions };

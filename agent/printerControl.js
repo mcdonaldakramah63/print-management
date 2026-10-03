@@ -31,10 +31,10 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const readline = require('readline');
-const { readDeviceStatus } = require('./snmp');
+const { readDeviceStatus, readDeviceInfo } = require('./snmp');
 
 const ACTIONS = new Set(['cancel_job', 'pause_job', 'resume_job', 'restart_job', 'pause_printer', 'resume_printer',
-  'set_online', 'test_page', 'clear_queue', 'set_defaults']);
+  'set_online', 'test_page', 'clear_queue', 'set_defaults', 'printer_info']);
 
 // ---------------------------------------------------------------
 // PowerShell host: one process, JSON lines in and out
@@ -131,7 +131,7 @@ function createJournal(file, limit = 300) {
 // ---------------------------------------------------------------
 // The controller
 // ---------------------------------------------------------------
-function createPrinterControl({ config, postJson, log, executor, journalPath, readDevice = readDeviceStatus, now = () => Date.now() }) {
+function createPrinterControl({ config, postJson, log, executor, journalPath, readDevice = readDeviceStatus, readInfo = readDeviceInfo, now = () => Date.now() }) {
   const {
     remoteControl = true,
     printerAddresses = {},
@@ -172,6 +172,24 @@ function createPrinterControl({ config, postJson, log, executor, journalPath, re
     }
   }
 
+  // A printer's full feature set: the driver's capabilities from Windows and,
+  // for network printers, the device's own identity and features over SNMP.
+  async function printerInfo(printerName) {
+    const windows = await executor.request('capabilities', printerName, {}, 45000);
+    let device = null;
+    const known = lastPrinters.find((p) => p.name === printerName);
+    const target = known ? hostFor(known) : hostFor({ name: printerName });
+    if (target) {
+      try {
+        device = await readInfo(target.host, { community: target.community || snmpCommunity, port: target.port || snmpPort });
+      } catch (err) {
+        device = { error: err.message };
+      }
+    }
+    return { windows, device, read_at: new Date(now()).toISOString() };
+  }
+
+  let lastPrinters = [];
   async function snapshot() {
     let printers;
     try {
@@ -180,6 +198,7 @@ function createPrinterControl({ config, postJson, log, executor, journalPath, re
       return { taken_at: new Date(now()).toISOString(), error: err.message, printers: [] };
     }
     printers = Array.isArray(printers) ? printers : printers ? [printers] : [];
+    lastPrinters = printers;
     for (const p of printers) {
       p.jobs = Array.isArray(p.jobs) ? p.jobs : p.jobs ? [p.jobs] : [];
       const target = hostFor(p);
@@ -198,7 +217,9 @@ function createPrinterControl({ config, postJson, log, executor, journalPath, re
       entry = { id: cmd.id, ok: false, error: 'Arrived too late; not run.', expired: true };
     } else {
       try {
-        const data = await executor.request(cmd.action, cmd.printer, cmd.params, 30000);
+        const data = cmd.action === 'printer_info'
+          ? await printerInfo(cmd.printer)
+          : await executor.request(cmd.action, cmd.printer, cmd.params, 30000);
         entry = { id: cmd.id, ok: true, data: data || null };
         log(`Printer control: ${cmd.action} on "${cmd.printer}" done.`);
       } catch (err) {

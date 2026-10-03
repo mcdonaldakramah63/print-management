@@ -11,10 +11,12 @@ let cartKey = 0;
 let payMethod = 'cash';
 let catalogCategory = 'All';
 let currentView = null;
+let currentRoute = null;  // view plus its parameter, e.g. "printer/3/HP M479"
+let routeParam = '';
 let historyPage = 1;
 
 const ADMIN_VIEWS = ['products', 'print-monitor', 'reconcile', 'users', 'settings', 'customers'];
-const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'customers', 'printers', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
+const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'customers', 'printers', 'printer', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
 const PAY_LABELS = { cash: 'Cash', momo: 'Mobile money', card: 'Card' };
 
 const $ = (id) => document.getElementById(id);
@@ -53,6 +55,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   setupHistory();
   setupReports();
   setupPrinters();
+  setupPrinterDetail();
   if (isAdmin()) {
     setupPrintMonitor();
     setupReconcile();
@@ -66,10 +69,10 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   }
   setupAccount();
 
-  navigateTo(location.hash.replace('#', '') || 'dashboard');
+  navigateTo(decodeURIComponent(location.hash.replace('#', '')) || 'dashboard');
   window.addEventListener('hashchange', () => {
-    const view = location.hash.replace('#', '');
-    if (view && view !== currentView) navigateTo(view);
+    const route = decodeURIComponent(location.hash.replace('#', ''));
+    if (route && route !== currentRoute) navigateTo(route);
   });
 })();
 
@@ -229,18 +232,26 @@ function setupNav() {
   });
 }
 
-function navigateTo(view) {
+function navigateTo(target) {
+  const [first, ...rest] = String(target || '').split('/');
+  let view = first;
+  routeParam = rest.join('/');
+  if (view === 'printer' && !routeParam) view = 'printers';
   if (!VIEWS.includes(view)) view = 'dashboard';
   if (ADMIN_VIEWS.includes(view) && !isAdmin()) view = 'dashboard';
+  if (view !== 'printer') routeParam = '';
+  const route = routeParam ? `${view}/${routeParam}` : view;
+  const navView = view === 'printer' ? 'printers' : view;
 
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
   document.querySelectorAll('.nav-link').forEach((l) => {
-    const on = l.dataset.view === view;
+    const on = l.dataset.view === navView;
     l.classList.toggle('active', on);
     if (on) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
   });
   currentView = view;
-  if (location.hash !== `#${view}`) location.hash = view;
+  currentRoute = route;
+  if (decodeURIComponent(location.hash.replace('#', '')) !== route) location.hash = route;
   window.scrollTo(0, 0);
 
   const loaders = {
@@ -250,6 +261,7 @@ function navigateTo(view) {
     reports: () => Promise.all([loadReport(), loadClose(), loadClosings(), ...(isAdmin() ? [loadTraffic(), loadMix()] : [])]),
     customers: loadCustomers,
     printers: loadPrinters,
+    printer: () => openPrinterDetail(routeParam),
     'print-monitor': () => Promise.all([loadPrintSummary(), loadSessions(), loadCopies(), loadAgents(), loadSupplies()]),
     reconcile: loadReconcile,
     products: loadProducts,
@@ -1109,6 +1121,7 @@ async function loadPrinters() {
   const { printers } = await api('GET', '/api/printers');
   printerList = printers;
   updatePrinterBadge(printers);
+  refreshFixGuide();
   $('printers-updated').textContent = `Updated ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
   const wrap = $('printers-wrap');
   if (printers.length === 0) {
@@ -1124,7 +1137,8 @@ async function loadPrinters() {
   wrap.querySelectorAll(':scope > :not([data-printer-key])').forEach((el) => el.remove());
   let prev = null;
   for (const p of printers) {
-    const { updated_at: _u, ...rest } = p;
+    trackIssues(p);
+    const { updated_at: _u, _newIssues: _n, ...rest } = p;
     const sig = JSON.stringify(rest);
     let el = wrap.querySelector(`[data-printer-key="${CSS.escape(p.key)}"]`);
     const busy = el && (el.contains(document.activeElement) && document.activeElement !== document.body);
@@ -1132,6 +1146,7 @@ async function loadPrinters() {
       const fresh = document.createElement('div');
       fresh.innerHTML = printerCard(p);
       const card = fresh.firstElementChild;
+      if (!el) card.classList.add('enter');
       if (el) el.replaceWith(card); else if (prev) prev.after(card); else wrap.prepend(card);
       el = card;
       printerCardSig.set(p.key, sig);
@@ -1152,97 +1167,569 @@ function trayHtml(t) {
   </div>`;
 }
 
-function printerCard(p) {
-  const [healthLabel, healthKind] = HEALTH[p.health] || HEALTH.offline;
+// Issues seen per printer, so new ones animate in and fixed ones say so on the way out.
+const seenIssues = new Map();   // printer key -> Map(issue key -> title)
+const resolvedGhosts = new Map(); // printer key -> [{ key, title, until }]
+
+function trackIssues(p) {
+  const prev = seenIssues.get(p.key);
+  const now = new Map(p.issues.map((i) => [i.key, i.title]));
+  const ghosts = (resolvedGhosts.get(p.key) || []).filter((g) => g.until > Date.now() && !now.has(g.key));
+  if (prev) {
+    for (const [key, title] of prev) if (!now.has(key) && !p.stale) ghosts.push({ key, title, until: Date.now() + 7000 });
+    p._newIssues = new Set(p.issues.filter((i) => !prev.has(i.key)).map((i) => i.key));
+  } else {
+    p._newIssues = new Set();
+  }
+  seenIssues.set(p.key, now);
+  resolvedGhosts.set(p.key, ghosts);
+  p._resolved = ghosts.map((g) => ({ key: g.key, title: g.title }));
+}
+
+function printerHref(p) { return `#printer/${p.agent_id}/${encodeURIComponent(p.name)}`; }
+
+function issueListHtml(p) {
   const can = (a) => p.actions.includes(a);
   const pendingJob = new Set(p.pending.filter((c) => c.params && c.params.job_id).map((c) => c.params.job_id));
   const pendingPrinter = new Set(p.pending.filter((c) => !(c.params && c.params.job_id)).map((c) => c.action));
-  const paused = p.issues.some((i) => i.key === 'paused');
-  const btn = (action, label, extra = '', cls = 'btn-outline') => `<button type="button" class="btn ${cls} btn-sm" data-printer-act="${action}" data-key="${escapeHtml(p.key)}"${extra}${pendingPrinter.has(action) ? ' disabled' : ''}>${escapeHtml(label)}</button>`;
-  const jobBtn = (j, action) => can(action) ? `<button type="button" class="btn btn-ghost btn-sm" data-printer-act="${action}" data-key="${escapeHtml(p.key)}" data-job="${j.id}" data-doc="${escapeHtml(j.document)}"${pendingJob.has(j.id) ? ' disabled' : ''}>${JOB_ACT_LABEL[action]}</button>` : '';
-
-  const device = p.device;
-  const screen = p.screen.length ? p.screen : [];
-  const panel = device ? `
-      <div class="lcd" role="group" aria-label="Printer screen">
-        ${screen.length ? screen.map((l) => `<div>${escapeHtml(l)}</div>`).join('') : `<div>${escapeHtml(device.reachable === false ? 'No reply from the printer' : device.status === 'printing' ? 'Printing…' : device.status === 'warmup' ? 'Warming up…' : 'Ready')}</div>`}
-      </div>
-      ${device.trays.length ? `<div class="stack" style="gap:6px;"><div class="mini-label">Paper</div>${device.trays.map(trayHtml).join('')}</div>` : ''}
-      ${device.covers.length ? `<div class="row" style="gap:6px; flex-wrap:wrap;">${device.covers.map((c) => `<span class="badge ${c.status === 'open' ? 'warn' : ''}">${escapeHtml(c.name)}: ${c.status === 'open' ? 'open' : 'closed'}</span>`).join('')}</div>` : ''}
-      ${device.alerts.length ? `<div class="stack" style="gap:4px;"><div class="mini-label">Printer messages</div>${device.alerts.slice(0, 4).map((a) => `<div class="small">${a.severity === 'critical' ? '<span class="badge warn">Critical</span> ' : ''}${escapeHtml(a.description)}</div>`).join('')}</div>` : ''}`
-    : `<div class="lcd lcd-off"><div>${escapeHtml(p.host ? 'Printer screen not available' : 'USB / local printer')}</div></div>
-       <p class="muted small" style="margin:0;">${p.host ? 'The printer did not share its panel (SNMP may be off).' : 'Only network printers share their screen, trays and covers. Queue controls still work.'}</p>`;
-
-  const issues = p.issues.length === 0 ? '' : `<ul class="issue-list">${p.issues.map((i) => `
-      <li class="issue sev-${i.severity}">
+  const ghosts = (p._resolved || []).map((g) => `
+      <li class="issue sev-fixed is-resolved" aria-live="polite">
+        <span class="issue-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path class="draw-check" d="M6 12.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <div class="issue-body"><div class="issue-title">Fixed: ${escapeHtml(g.title)}</div></div>
+      </li>`).join('');
+  if (!p.issues.length && !ghosts) return '';
+  return `<ul class="issue-list">${ghosts}${p.issues.map((i) => {
+    const fixes = i.fixes.filter((f) => can(f.action));
+    return `
+      <li class="issue sev-${i.severity}${p._newIssues && p._newIssues.has(i.key) ? ' is-new' : ''}">
         <span class="issue-icon" aria-hidden="true">${SEVERITY_ICON[i.severity]}</span>
         <div class="issue-body">
           <div class="issue-title">${escapeHtml(i.title)}${i.confirmed ? ' <span class="badge" title="Reported by the printer and by Windows">Confirmed</span>' : ''}</div>
           ${i.detail ? `<div class="muted small">${escapeHtml(i.detail)}</div>` : ''}
-          ${i.steps.length ? `<ol class="issue-steps">${i.steps.map((st) => `<li>${escapeHtml(st)}</li>`).join('')}</ol>` : ''}
-          ${i.fixes.filter((f) => can(f.action)).length ? `<div class="row" style="gap:6px; margin-top:8px; flex-wrap:wrap;">${i.fixes.filter((f) => can(f.action)).map((f) => `<button type="button" class="btn btn-primary btn-sm" data-printer-act="${f.action}" data-key="${escapeHtml(p.key)}"${f.params ? ` data-job="${f.params.job_id}" data-doc="${escapeHtml(f.params.document)}"` : ''}${(f.params && pendingJob.has(f.params.job_id)) || pendingPrinter.has(f.action) ? ' disabled' : ''}>${escapeHtml(f.label)}</button>`).join('')}</div>` : ''}
+          <div class="row" style="gap:6px; margin-top:8px; flex-wrap:wrap;">
+            ${guideFor(i) ? `<button type="button" class="btn btn-outline btn-sm guide-btn" data-guide="${escapeHtml(i.key)}" data-key="${escapeHtml(p.key)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>Show me how</button>` : ''}
+            ${fixes.map((f) => `<button type="button" class="btn btn-primary btn-sm" data-printer-act="${f.action}" data-key="${escapeHtml(p.key)}"${f.params ? ` data-job="${f.params.job_id}" data-doc="${escapeHtml(f.params.document)}"` : ''}${(f.params && pendingJob.has(f.params.job_id)) || pendingPrinter.has(f.action) ? ' disabled' : ''}>${escapeHtml(f.label)}</button>`).join('')}
+          </div>
         </div>
-      </li>`).join('')}</ul>`;
+      </li>`;
+  }).join('')}</ul>`;
+}
 
-  const queue = p.queue.length === 0 ? '<p class="muted" style="margin:0;">Nothing waiting.</p>' : `
+function devicePanelHtml(p) {
+  const device = p.device;
+  if (!device) {
+    return `<div class="lcd lcd-off"><div>${escapeHtml(p.host ? 'Printer screen not available' : 'USB / local printer')}</div></div>
+       <p class="muted small" style="margin:0;">${p.host ? 'The printer did not share its panel (SNMP may be off).' : 'Only network printers share their screen, trays and covers. Queue controls still work.'}</p>`;
+  }
+  const screen = p.screen.length ? p.screen : [device.reachable === false ? 'No reply from the printer' : device.status === 'printing' ? 'Printing...' : device.status === 'warmup' ? 'Warming up...' : 'Ready'];
+  return `
+      <div class="lcd${device.reachable === false ? ' lcd-dead' : ''}" role="group" aria-label="Printer screen">
+        ${screen.map((l, i) => `<div>${escapeHtml(l)}${i === screen.length - 1 ? '<span class="lcd-cursor" aria-hidden="true"></span>' : ''}</div>`).join('')}
+      </div>
+      ${device.trays.length ? `<div class="stack" style="gap:6px;"><div class="mini-label">Paper</div>${device.trays.map(trayHtml).join('')}</div>` : ''}
+      ${device.covers.length ? `<div class="row" style="gap:6px; flex-wrap:wrap;">${device.covers.map((c) => `<span class="badge ${c.status === 'open' ? 'warn' : ''}">${escapeHtml(c.name)}: ${c.status === 'open' ? 'open' : 'closed'}</span>`).join('')}</div>` : ''}
+      ${device.alerts.length ? `<div class="stack" style="gap:4px;"><div class="mini-label">Printer messages</div>${device.alerts.slice(0, 4).map((a) => `<div class="small">${a.severity === 'critical' ? '<span class="badge warn">Critical</span> ' : ''}${escapeHtml(a.description)}</div>`).join('')}</div>` : ''}`;
+}
+
+function queueTableHtml(p) {
+  const can = (a) => p.actions.includes(a);
+  const pendingJob = new Set(p.pending.filter((c) => c.params && c.params.job_id).map((c) => c.params.job_id));
+  const jobBtn = (j, action) => can(action) ? `<button type="button" class="btn btn-ghost btn-sm" data-printer-act="${action}" data-key="${escapeHtml(p.key)}" data-job="${j.id}" data-doc="${escapeHtml(j.document)}"${pendingJob.has(j.id) ? ' disabled' : ''}>${JOB_ACT_LABEL[action]}</button>` : '';
+  if (p.queue.length === 0) return '<p class="muted" style="margin:0;">Nothing waiting.</p>';
+  return `
     <div class="table-wrap"><table class="queue-table">
       <thead><tr><th>Document</th><th>Progress</th><th>Status</th><th class="num">Wait</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${p.queue.map((j) => {
         const held = /Paused/.test(j.status);
+        const live = /Printing/.test(j.status) && !/Error/.test(j.status) && p.health !== 'error';
         return `<tr${j.id === p.stalled_job_id ? ' class="is-stalled"' : ''}>
           <td><div style="font-weight:600;">${escapeHtml(j.document || '(untitled)')}</div><div class="muted small">${escapeHtml(j.owner || '')}</div></td>
-          <td data-label="Progress" style="min-width:140px;">${j.total_pages ? `<div class="small">${j.pages_printed} of ${j.total_pages} pages</div><div class="tray-bar"><span style="width:${Math.round((j.progress || 0) * 100)}%"></span></div>` : '<span class="muted small">Pages unknown</span>'}</td>
+          <td data-label="Progress" style="min-width:140px;">${j.total_pages ? `<div class="small">${j.pages_printed} of ${j.total_pages} pages</div><div class="tray-bar${live ? ' live' : ''}"><span style="width:${Math.max(3, Math.round((j.progress || 0) * 100))}%"></span></div>` : '<span class="muted small">Pages unknown</span>'}</td>
           <td class="small" data-label="Status">${escapeHtml(j.status || 'Waiting')}</td>
           <td class="num small" data-label="Wait">${j.eta_min ? `~${j.eta_min} min` : '<span class="muted">&mdash;</span>'}</td>
-          <td><div class="actions">${pendingJob.has(j.id) ? '<span class="badge info">Working…</span>' : `${jobBtn(j, held ? 'resume_job' : 'pause_job')}${jobBtn(j, 'restart_job')}${jobBtn(j, 'cancel_job')}`}</div></td>
+          <td><div class="actions">${pendingJob.has(j.id) ? '<span class="badge info"><span class="spinner" aria-hidden="true"></span>Working</span>' : `${jobBtn(j, held ? 'resume_job' : 'pause_job')}${jobBtn(j, 'restart_job')}${jobBtn(j, 'cancel_job')}`}</div></td>
         </tr>`;
       }).join('')}</tbody>
     </table></div>`;
+}
 
+function pendingHtml(p) {
+  const pending = p.pending.filter((c) => c.action !== 'printer_info');
+  const chips = pending.length ? `<div class="row" style="gap:6px; flex-wrap:wrap;" aria-live="polite">${pending.map((c) => `<span class="badge info pending-chip"><span class="spinner" aria-hidden="true"></span>${escapeHtml(PENDING_LABEL[c.action] || c.verb)}${c.params && c.params.document ? ` "${escapeHtml(c.params.document)}"` : ''}...</span>`).join('')}</div>` : '';
+  const failed = p.recent.filter((c) => (c.status === 'failed' || c.status === 'expired') && c.action !== 'printer_info').slice(0, 2);
+  return chips + failed.map((c) => `<div class="small" style="color:var(--warn-ink);">${escapeHtml(c.verb)}${c.params && c.params.document ? ` "${escapeHtml(c.params.document)}"` : ''}: ${escapeHtml(c.error || c.status)}</div>`).join('');
+}
+
+function controlsHtml(p) {
+  const can = (a) => p.actions.includes(a);
+  const pendingPrinter = new Set(p.pending.filter((c) => !(c.params && c.params.job_id)).map((c) => c.action));
+  const paused = p.issues.some((i) => i.key === 'paused');
+  const btn = (action, label, cls = 'btn-outline') => `<button type="button" class="btn ${cls} btn-sm" data-printer-act="${action}" data-key="${escapeHtml(p.key)}"${pendingPrinter.has(action) ? ' disabled' : ''}>${escapeHtml(label)}</button>`;
+  return `<div class="row printer-controls">
+      ${paused ? btn('resume_printer', 'Resume printing', 'btn-primary') : can('pause_printer') ? btn('pause_printer', 'Pause printing') : ''}
+      ${can('test_page') ? btn('test_page', 'Print test page') : ''}
+      ${can('clear_queue') && p.queue.length ? btn('clear_queue', 'Clear queue', 'btn-ghost') : ''}
+      ${p.host ? `<a class="btn btn-ghost btn-sm" href="http://${escapeHtml(p.host)}/" target="_blank" rel="noopener">Printer's own page</a>` : ''}
+    </div>`;
+}
+
+function printerCard(p, { detail = false } = {}) {
+  const [healthLabel, healthKind] = HEALTH[p.health] || HEALTH.offline;
   const cfg = p.config;
-  const settings = cfg && can('set_defaults') ? `
-    <form class="defaults-form" data-key="${escapeHtml(p.key)}">
-      <div class="field"><label>Sides</label><select name="duplex">${Object.entries(DUPLEX_LABEL).map(([v, l]) => `<option value="${v}"${cfg.duplex === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="field"><label>Colour</label><select name="color"><option value="true"${cfg.color ? ' selected' : ''}>Colour</option><option value="false"${cfg.color ? '' : ' selected'}>Black &amp; white</option></select></div>
-      <div class="field"><label>Paper</label><select name="paper_size">${['A4', 'A3', 'A5', 'Letter', 'Legal'].map((v) => `<option${cfg.paper_size === v ? ' selected' : ''}>${v}</option>`).join('')}${['A4', 'A3', 'A5', 'Letter', 'Legal'].includes(cfg.paper_size) ? '' : `<option selected value="">${escapeHtml(cfg.paper_size || 'Other')}</option>`}</select></div>
-      <button type="button" class="btn btn-outline btn-sm" data-printer-act="set_defaults" data-key="${escapeHtml(p.key)}"${pendingPrinter.has('set_defaults') ? ' disabled' : ''}>Apply</button>
-    </form>` : cfg ? `<p class="muted small" style="margin:0;">Defaults: ${escapeHtml(DUPLEX_LABEL[cfg.duplex] || cfg.duplex || '?')} · ${cfg.color ? 'colour' : 'black &amp; white'} · ${escapeHtml(cfg.paper_size || '?')}</p>` : '';
-
-  const pending = p.pending.length ? `<div class="row" style="gap:6px; flex-wrap:wrap;" aria-live="polite">${p.pending.map((c) => `<span class="badge info"><span class="spinner" aria-hidden="true"></span>${escapeHtml(PENDING_LABEL[c.action] || c.verb)}${c.params && c.params.document ? ` "${escapeHtml(c.params.document)}"` : ''}…</span>`).join('')}</div>` : '';
-  const failed = p.recent.filter((c) => c.status === 'failed' || c.status === 'expired').slice(0, 2);
-  const recent = failed.length ? failed.map((c) => `<div class="small" style="color:var(--warn-ink);">${escapeHtml(c.verb)}${c.params && c.params.document ? ` "${escapeHtml(c.params.document)}"` : ''}: ${escapeHtml(c.error || c.status)}</div>`).join('') : '';
-
-  return `<article class="card printer-card health-${p.health}" data-printer-key="${escapeHtml(p.key)}" aria-labelledby="pn-${escapeHtml(p.key.replace(/[^\w-]/g, '_'))}">
+  const id = `pn-${p.key.replace(/[^\w-]/g, '_')}`;
+  return `<article class="card printer-card health-${p.health}" data-printer-key="${escapeHtml(p.key)}" aria-labelledby="${escapeHtml(id)}">
     <div class="printer-head">
       <div style="min-width:0;">
-        <h2 id="pn-${escapeHtml(p.key.replace(/[^\w-]/g, '_'))}" class="printer-name">${escapeHtml(p.name)}${p.is_default ? ' <span class="badge">Default</span>' : ''}</h2>
+        <h2 id="${escapeHtml(id)}" class="printer-name">${detail ? escapeHtml(p.name) : `<a class="printer-link" href="${printerHref(p)}">${escapeHtml(p.name)}</a>`}${p.is_default ? ' <span class="badge">Default</span>' : ''}</h2>
         <div class="muted small">On ${escapeHtml(p.agent_label)}${p.host ? ` · ${escapeHtml(p.host)}` : ''}${p.speed && p.speed.source === 'learned' ? ` · about ${p.speed.ppm} pages/min` : ''}${p.stale ? ` · last report ${escapeHtml(timeOf(p.updated_at))}` : ''}</div>
       </div>
-      <span class="badge ${healthKind} health-pill">${healthLabel}</span>
+      <span class="badge ${healthKind} health-pill">${p.health === 'busy' ? '<span class="pulse-dot" aria-hidden="true"></span>' : ''}${healthLabel}</span>
     </div>
     <div class="printer-headline">${escapeHtml(p.headline)}</div>
-    ${pending}${recent}
+    ${pendingHtml(p)}
     <div class="printer-grid">
-      <div class="stack" style="gap:10px;">${panel}</div>
+      <div class="stack" style="gap:10px;">${devicePanelHtml(p)}</div>
       <div class="stack" style="gap:14px; min-width:0;">
-        ${issues}
-        <div class="stack" style="gap:8px;"><div class="mini-label">Queue${p.queue.length ? ` · ${p.queue.length}` : ''}</div>${queue}</div>
-        <div class="row printer-controls">
-          ${paused ? btn('resume_printer', 'Resume printing', '', 'btn-primary') : can('pause_printer') ? btn('pause_printer', 'Pause printing') : ''}
-          ${can('test_page') ? btn('test_page', 'Print test page') : ''}
-          ${can('clear_queue') && p.queue.length ? btn('clear_queue', 'Clear queue', '', 'btn-ghost') : ''}
-          ${p.host ? `<a class="btn btn-ghost btn-sm" href="http://${escapeHtml(p.host)}/" target="_blank" rel="noopener">Printer's own page</a>` : ''}
-        </div>
-        ${settings}
+        ${issueListHtml(p)}
+        ${detail ? '' : `<div class="stack" style="gap:8px;"><div class="mini-label">Queue${p.queue.length ? ` · ${p.queue.length}` : ''}</div>${queueTableHtml(p)}</div>`}
+        ${controlsHtml(p)}
+        ${!detail && cfg ? `<div class="row" style="gap:10px; flex-wrap:wrap; align-items:center;"><span class="muted small">Defaults: ${escapeHtml(DUPLEX_LABEL[cfg.duplex] || cfg.duplex || '?')} · ${cfg.color ? 'colour' : 'black &amp; white'} · ${escapeHtml(cfg.paper_size || '?')}</span><a class="small" href="${printerHref(p)}">All features and settings &rarr;</a></div>` : ''}
       </div>
     </div>
   </article>`;
 }
 
+// ---------------------------------------------------------------
+// Guided fixes: an animated, step-by-step "how to fix it" for each issue.
+// Every step that the printer can confirm ticks itself off from the live
+// state (door opened, jam cleared, tray filled...), later steps confirming
+// imply the earlier ones, and the guide ends when the issue is gone.
+// ---------------------------------------------------------------
+const hasIssue = (q, key) => q.issues.some((i) => i.key === key || i.key.startsWith(`${key}:`));
+const anyCoverOpen = (q) => !!(q.device && q.device.covers.some((c) => c.status === 'open'));
+const coverNames = (q) => (q.device ? q.device.covers.map((c) => c.name) : []);
+const emptyTrayNames = (q) => (q.device ? q.device.trays.filter((t) => t.empty).map((t) => t.name) : []);
+const headJob = (q) => q.queue[0] || null;
+const words = (list) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
+
+function guideSteps(issue, p) {
+  const base = issue.key.split(':')[0];
+  const gone = (q) => !q.issues.some((i) => i.key === issue.key);
+  const fix = (action) => issue.fixes.find((f) => f.action === action);
+  const doors = coverNames(p);
+  const job = headJob(p);
+  const media = p.device && p.device.trays.find((t) => t.empty && t.media);
+  const toner = base === 'no_toner' || base === 'low_toner';
+  switch (base) {
+    case 'jammed': return [
+      { art: 'open-door', title: `Open ${doors.length ? words(doors) : 'the front door'}`, hint: 'Ticks itself off when the printer reports the door open.', check: (q) => anyCoverOpen(q) },
+      { art: 'remove-jam', title: 'Pull the stuck paper out', hint: 'Hold it with both hands and pull slowly in the direction the paper travels. Check no torn pieces are left behind.', check: (q) => !hasIssue(q, 'jammed') },
+      { art: 'close-door', title: 'Close every door until it clicks', hint: 'The printer warms up again on its own.', check: (q) => !hasIssue(q, 'jammed') && !anyCoverOpen(q) && !hasIssue(q, 'door_open') },
+      ...(job ? [{ art: 'restart', title: `Restart "${job.document}" if pages came out incomplete`, hint: 'It prints again from the first page. Skip this if everything came out.', action: { action: 'restart_job', label: `Restart "${job.document}"`, params: { job_id: job.id, document: job.document } }, optional: true }] : [])
+    ];
+    case 'door_open': return [
+      { art: 'close-door', title: `Close ${doors.filter((d, i) => p.device.covers[i].status === 'open').join(', ') || 'the open door'}`, hint: 'Push it firmly until it clicks into place.', check: gone }
+    ];
+    case 'no_paper': case 'tray_empty': case 'low_paper': return [
+      { art: 'load-paper', title: `Load ${media ? media.media : ''} paper in ${words(emptyTrayNames(p)) || 'the tray'}`.replace(/\s+/g, ' '), hint: 'Pull the tray out, fan the stack, put it in print side down without going over the max line, and push the tray all the way in.', check: gone }
+    ];
+    case 'no_toner': case 'low_toner': return [
+      { art: 'open-door', title: 'Open the toner door', hint: 'Usually the front door; some printers open at the top.', check: (q) => anyCoverOpen(q) || !hasIssue(q, base) },
+      { art: 'replace-toner', title: 'Swap the cartridge', hint: 'Lift out the old one. Shake the new one gently side to side, pull off the tape, and slide it in until it clicks.', check: (q) => !hasIssue(q, base) },
+      { art: 'close-door', title: 'Close the door', hint: 'The new level shows here within a minute.', check: (q) => !hasIssue(q, base) && !anyCoverOpen(q) }
+    ].slice(toner && !p.device ? 1 : 0);
+    case 'output_full': case 'output_near_full': return [
+      { art: 'empty-output', title: 'Take the printed pages out of the output tray', hint: 'Check whose they are before you put them aside.', check: gone }
+    ];
+    case 'windows_offline': return [
+      { art: 'online', title: 'Bring the printer back online', hint: 'Windows was set to "Use printer offline", so jobs were waiting. This switches it back.', action: fix('set_online') && { action: 'set_online', label: 'Bring online' }, check: gone }
+    ];
+    case 'paused': return [
+      { art: 'restart', title: 'Resume printing', hint: 'The queue starts moving again straight away.', action: fix('resume_printer') && { action: 'resume_printer', label: 'Resume printing' }, check: gone }
+    ];
+    case 'unreachable': return [
+      { art: 'power', title: 'Check the printer is switched on and awake', hint: 'Press any button to wake it from sleep.', check: gone },
+      { art: 'network', title: 'Check its network cable or Wi-Fi', hint: 'The cable should click in at both ends; on Wi-Fi the wireless light should be steady.', check: gone },
+      { art: 'power', title: 'Still nothing? Turn it off, wait 10 seconds, turn it on', hint: 'Give it a minute to rejoin the network.', check: gone }
+    ];
+    case 'offline': return [
+      { art: 'press-button', title: 'Press the Online / Ready button on the printer', hint: 'On printers with a touch screen, tap the message on screen.', check: gone },
+      { art: 'power', title: 'Still offline? Turn it off and on again', hint: 'Wait for it to finish warming up.', check: gone }
+    ];
+    case 'queue_stuck': case 'job_error': return [
+      ...(fix('restart_job') ? [{ art: 'restart', title: `Restart "${fix('restart_job').params.document}"`, hint: 'It prints again from the start, which clears most stuck jobs.', action: fix('restart_job'), check: gone }] : []),
+      ...(fix('cancel_job') ? [{ art: 'cancel', title: `Still stuck? Cancel "${fix('cancel_job').params.document}"`, hint: 'The jobs behind it start printing; print the cancelled one again.', action: fix('cancel_job'), optional: true, check: gone }] : [])
+    ];
+    case 'job_paused': return [
+      { art: 'restart', title: issue.title.replace(' is on hold', ''), hint: 'Release it and it joins the queue again.', action: fix('resume_job'), check: gone }
+    ];
+    case 'agent_offline': return [
+      { art: 'pc', title: 'Check the PC this printer is connected to is on', hint: 'And that it is connected to the network.', check: (q) => !q.stale },
+      { art: 'pc', title: 'Start the print agent on it', hint: 'Run PrintMonitorAgent (or wait for it to start at log-on).', check: (q) => !q.stale }
+    ];
+    default:
+      return (issue.steps.length ? issue.steps : ['Look at the message on the printer screen']).map((text, i) => ({
+        art: i === 0 ? 'screen' : 'press-button', title: text, hint: issue.detail || '', check: gone
+      }));
+  }
+}
+
+function guideFor(issue) { return !issue.key.startsWith('low_') || issue.key === 'low_paper' || issue.key === 'low_toner'; }
+
+// ---------------------------------------------------------------
+// Illustrations (inline SVG, animated with CSS; still frames when the
+// viewer prefers reduced motion)
+// ---------------------------------------------------------------
+function fixArt(kind) {
+  const body = `
+    <ellipse cx="120" cy="156" rx="94" ry="6" class="a-shadow"/>
+    <rect x="34" y="38" width="172" height="104" rx="12" class="a-body"/>
+    <rect x="66" y="38" width="108" height="9" rx="3" class="a-slot"/>
+    <rect x="152" y="54" width="42" height="22" rx="4" class="a-panel"/>
+    <rect x="156" y="58" width="34" height="14" rx="2" class="a-screen"/>`;
+  const cavity = '<rect x="46" y="82" width="98" height="42" rx="5" class="a-cavity"/>';
+  const door = '<g class="a-door"><rect x="46" y="82" width="98" height="42" rx="5"/><rect x="82" y="88" width="26" height="4" rx="2" class="a-handle"/></g>';
+  const tray = '<g class="a-tray"><rect x="54" y="126" width="132" height="12" rx="3"/><rect x="108" y="130" width="24" height="3" rx="1.5" class="a-handle"/></g>';
+  const svg = (cls, inner) => `<svg class="fix-art art-${cls}" viewBox="0 0 240 170" aria-hidden="true">${inner}</svg>`;
+  const arrowDown = (x, y) => `<path class="a-arrow" d="M${x} ${y}v18m-7-7l7 7 7-7"/>`;
+  switch (kind) {
+    case 'open-door': return svg(kind, `${body}${cavity}${door}${tray}${arrowDown(95, 128)}`);
+    case 'remove-jam': return svg(kind, `${body}${cavity}<g class="a-jam"><path d="M58 92h70l-4 18H62z" class="a-sheet"/><path d="M66 98h50M66 104h42" class="a-lines"/></g>${door}${tray}`);
+    case 'close-door': return svg(kind, `${body}${cavity}${door}${tray}<circle cx="95" cy="104" r="10" class="a-ring"/>`);
+    case 'load-paper': return svg(kind, `${body}${cavity.replace('a-cavity', 'a-cavity a-hidden')}<rect x="46" y="82" width="98" height="42" rx="5" class="a-door-static"/>${tray.replace('</g>', '<g class="a-stack"><rect x="70" y="112" width="100" height="5" rx="1" class="a-sheet"/><rect x="70" y="117" width="100" height="5" rx="1" class="a-sheet"/><rect x="70" y="122" width="100" height="5" rx="1" class="a-sheet"/></g></g>')}`);
+    case 'replace-toner': return svg(kind, `${body}${cavity}<g class="a-door a-door-open"><rect x="46" y="82" width="98" height="42" rx="5"/></g><rect x="60" y="88" width="70" height="16" rx="4" class="a-cart-old"/><rect x="60" y="88" width="70" height="16" rx="4" class="a-cart-new"/>${tray}`);
+    case 'empty-output': return svg(kind, `${body}${cavity.replace('a-cavity', 'a-cavity a-hidden')}<rect x="46" y="82" width="98" height="42" rx="5" class="a-door-static"/>${tray}<g class="a-out"><rect x="74" y="26" width="92" height="14" rx="2" class="a-sheet"/><rect x="74" y="20" width="92" height="6" rx="2" class="a-sheet"/></g>`);
+    case 'press-button': return svg(kind, `${body}<rect x="46" y="82" width="98" height="42" rx="5" class="a-door-static"/>${tray}<circle cx="173" cy="88" r="5" class="a-button"/><circle cx="173" cy="88" r="5" class="a-ripple"/><circle cx="173" cy="88" r="5" class="a-ripple r2"/>`);
+    case 'power': return svg(kind, `${body}<rect x="46" y="82" width="98" height="42" rx="5" class="a-door-static"/>${tray}<g class="a-power"><circle cx="173" cy="90" r="7"/><path d="M173 85v5m-3.5-2.5a5 5 0 1 0 7 0" class="a-power-icon"/></g>`);
+    case 'network': return svg(kind, `${body}<rect x="46" y="82" width="98" height="42" rx="5" class="a-door-static"/>${tray}<rect x="196" y="98" width="8" height="12" rx="1" class="a-port"/><g class="a-plug"><rect x="208" y="99" width="14" height="10" rx="2"/><path d="M222 104h16"/></g><g class="a-wifi"><path class="w1" d="M114 22a8 8 0 0 1 12 0"/><path class="w2" d="M108 16a17 17 0 0 1 24 0"/><path class="w3" d="M102 10a26 26 0 0 1 36 0"/></g>`);
+    case 'restart': return svg(kind, `${body}<rect x="46" y="82" width="98" height="42" rx="5" class="a-door-static"/>${tray}<g class="a-feed"><rect x="80" y="8" width="80" height="34" rx="2" class="a-sheet"/><path d="M90 18h50M90 25h38M90 32h44" class="a-lines"/></g><rect x="60" y="38" width="120" height="8" rx="3" class="a-slot-front"/>`);
+    case 'cancel': return svg(kind, `<g class="a-docs"><rect x="70" y="40" width="90" height="110" rx="6" class="a-sheet back"/><g class="a-doc-top"><rect x="80" y="30" width="90" height="110" rx="6" class="a-sheet"/><path d="M95 60h58M95 74h44M95 88h52" class="a-lines"/><path d="M110 104l30 30m0-30l-30 30" class="a-x"/></g></g>`);
+    case 'online': return svg(kind, `<rect x="40" y="24" width="160" height="100" rx="8" class="a-monitor"/><rect x="50" y="34" width="140" height="80" rx="4" class="a-screen-big"/><path d="M100 124h40l6 18h-52z" class="a-stand"/><text x="64" y="64" class="a-text">Use printer offline</text><g class="a-toggle"><rect x="134" y="80" width="44" height="22" rx="11" class="a-track"/><circle cx="145" cy="91" r="8" class="a-knob"/></g>`);
+    case 'pc': return svg(kind, `<rect x="40" y="24" width="160" height="100" rx="8" class="a-monitor"/><rect x="50" y="34" width="140" height="80" rx="4" class="a-screen-big"/><path d="M100 124h40l6 18h-52z" class="a-stand"/><circle cx="120" cy="74" r="18" class="a-spin"/>`);
+    default: return svg('screen', `${body}<rect x="46" y="82" width="98" height="42" rx="5" class="a-door-static"/>${tray}<g class="a-zoom"><circle cx="173" cy="65" r="26" class="a-lens"/><path d="M191 84l14 14" class="a-lens-handle"/><path d="M160 60h26M160 68h18" class="a-lcd-lines"/></g>`);
+  }
+}
+
+const SUCCESS_ART = `<svg class="fix-art art-success" viewBox="0 0 240 170" aria-hidden="true">
+  <circle cx="120" cy="82" r="46" class="a-ok-ring"/>
+  <path d="M98 84l15 15 30-32" class="a-ok-check"/>
+  ${[0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<circle cx="${120 + 64 * Math.cos((a * Math.PI) / 180)}" cy="${82 + 64 * Math.sin((a * Math.PI) / 180)}" r="4" class="a-spark" style="--a:${a}deg"/>`).join('')}
+</svg>`;
+
+// ---------------------------------------------------------------
+// The guide dialog
+// ---------------------------------------------------------------
+let fixGuide = null; // { printerKey, issueKey, title, steps, done:Set, cmd:{}, sig, timer, finished }
+
+function findPrinter(key) {
+  if (detailState.data && detailState.data.printer.key === key) return detailState.data.printer;
+  return printerByKey(key);
+}
+
+function openFixGuide(printerKey, issueKey) {
+  const p = findPrinter(printerKey);
+  const issue = p && p.issues.find((i) => i.key === issueKey);
+  if (!issue) return;
+  if (fixGuide) clearInterval(fixGuide.timer);
+  fixGuide = { printerKey, issueKey, title: issue.title, steps: guideSteps(issue, p), done: new Set(), cmd: {}, sig: '', finished: false };
+  openModal({
+    title: `How to fix: ${issue.title}`,
+    wide: true,
+    hideSubmit: true,
+    body: '<div id="fix-guide" class="guide"></div>',
+    onOpen: (form) => {
+      form.addEventListener('click', onGuideClick);
+      renderFixGuide(true);
+    },
+    onClose: () => { if (fixGuide) clearInterval(fixGuide.timer); fixGuide = null; }
+  });
+  // Watch the printer closely while the guide is open.
+  fixGuide.timer = setInterval(() => {
+    const reload = currentView === 'printer' ? loadPrinterDetail() : loadPrinters();
+    reload.catch(() => {});
+  }, 2000);
+}
+
+function guideProgress(p) {
+  const g = fixGuide;
+  const issueGone = !p.issues.some((i) => i.key === g.issueKey) && !p.stale;
+  // A later step confirming means the earlier ones happened.
+  let last = -1;
+  g.steps.forEach((st, i) => {
+    const cmd = g.cmd[i];
+    const viaCmd = cmd && p.recent.some((c) => c.id === cmd && c.status === 'done');
+    if (g.done.has(i) || viaCmd || (st.check && st.check(p))) last = Math.max(last, i);
+  });
+  for (let i = 0; i <= last; i++) g.done.add(i);
+  const active = g.steps.findIndex((st, i) => !g.done.has(i) && !(st.optional && issueGone));
+  return { issueGone, active };
+}
+
+function renderFixGuide(force) {
+  const g = fixGuide;
+  const root = document.getElementById('fix-guide');
+  if (!g || !root) return;
+  const p = findPrinter(g.printerKey);
+  if (!p) return;
+  const { issueGone, active } = guideProgress(p);
+  const finished = issueGone && (active === -1 || g.steps[active].optional);
+  const failedCmd = Object.values(g.cmd).map((id) => p.recent.find((c) => c.id === id && (c.status === 'failed' || c.status === 'expired'))).find(Boolean);
+  const sig = JSON.stringify([finished, active, [...g.done], failedCmd && failedCmd.id, p.stale, Object.keys(g.cmd)]);
+  if (!force && sig === g.sig) return;
+  const stepChanged = g.lastActive !== active || g.finished !== finished;
+  g.sig = sig;
+  g.lastActive = active;
+  g.finished = finished;
+
+  if (finished) {
+    const next = p.issues.find((i) => i.severity !== 'info' && guideFor(i));
+    root.innerHTML = `
+      <div class="guide-done" role="status">
+        <div class="guide-art">${SUCCESS_ART}</div>
+        <h3>Fixed: ${escapeHtml(g.title)}</h3>
+        <p class="muted">${next ? `One more thing on ${escapeHtml(p.name)}: ${escapeHtml(next.title)}.` : `${escapeHtml(p.name)} reports it is ${p.health === 'busy' ? 'printing again' : 'ready'}.`}</p>
+        <div class="row" style="gap:8px; justify-content:center;">
+          ${next ? `<button type="button" class="btn btn-primary" data-guide-next="${escapeHtml(next.key)}">Fix the next one</button>` : ''}
+        </div>
+      </div>`;
+    return;
+  }
+  const idx = active === -1 ? g.steps.length - 1 : active;
+  const step = g.steps[idx];
+  const allDoneStillThere = active === -1 && !issueGone;
+  const stepList = g.steps.map((st, i) => `
+    <li class="${g.done.has(i) ? 'done' : i === idx ? 'active' : ''}">
+      <span class="step-dot" aria-hidden="true">${g.done.has(i) ? '<svg viewBox="0 0 24 24"><path d="M6 12.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>' : i + 1}</span>
+      <span>${escapeHtml(st.title)}${st.optional ? ' <span class="muted small">(if needed)</span>' : ''}</span>
+    </li>`).join('');
+  const watching = step.check && !p.stale;
+  root.innerHTML = `
+    <ol class="guide-steps" aria-label="Steps">${stepList}</ol>
+    <div class="guide-stage">
+      <div class="guide-art${stepChanged ? ' swap' : ''}">${fixArt(step.art)}</div>
+      <div class="guide-text">
+        <div class="mini-label">Step ${idx + 1} of ${g.steps.length}</div>
+        <h3>${escapeHtml(step.title)}</h3>
+        ${step.hint ? `<p class="muted" style="margin:0;">${escapeHtml(step.hint)}</p>` : ''}
+        ${allDoneStillThere ? `<div class="callout" style="margin-top:4px;">All steps done, but ${escapeHtml(p.name)} still reports this problem. Give it a minute, or look at the printer screen${p.screen.length ? `: "${escapeHtml(p.screen.join(' · '))}"` : ''}.</div>` : ''}
+        ${p.stale ? '<div class="callout">The PC with this printer isn\'t reporting, so steps can\'t be checked automatically. Tick them off yourself.</div>' : ''}
+        ${failedCmd ? `<div class="callout" style="color:var(--warn-ink);">${escapeHtml(failedCmd.verb)} didn't work: ${escapeHtml(failedCmd.error || failedCmd.status)}</div>` : ''}
+        ${watching && !allDoneStillThere ? '<div class="guide-live" aria-live="polite"><span class="live-dot" aria-hidden="true"></span>Watching the printer: this ticks itself off when it\'s done</div>' : ''}
+        <div class="row" style="gap:8px; flex-wrap:wrap; margin-top:6px;">
+          ${idx > 0 ? '<button type="button" class="btn btn-ghost" data-guide-back>Back</button>' : ''}
+          ${step.action && p.actions.includes(step.action.action) ? `<button type="button" class="btn btn-primary" data-guide-act="${idx}"${g.cmd[idx] && !failedCmd ? ' disabled' : ''}>${g.cmd[idx] && !failedCmd ? '<span class="spinner" aria-hidden="true"></span>Working' : escapeHtml(step.action.label)}</button>` : ''}
+          ${active !== -1 ? `<button type="button" class="btn ${step.action ? 'btn-outline' : 'btn-primary'}" data-guide-skip="${idx}">${step.optional ? 'Not needed' : step.check ? "I've done this" : 'Next'}</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function onGuideClick(e) {
+  const g = fixGuide;
+  if (!g) return;
+  if (e.target.closest('[data-guide-close]')) { document.querySelector('[data-modal-cancel]').click(); return; }
+  const next = e.target.closest('[data-guide-next]');
+  if (next) { const key = g.printerKey; document.querySelector('[data-modal-cancel]').click(); openFixGuide(key, next.dataset.guideNext); return; }
+  if (e.target.closest('[data-guide-back]')) {
+    const last = Math.max(...[...g.done]);
+    g.done.delete(last);
+    renderFixGuide(true);
+    return;
+  }
+  const skip = e.target.closest('[data-guide-skip]');
+  if (skip) { g.done.add(Number(skip.dataset.guideSkip)); renderFixGuide(true); return; }
+  const act = e.target.closest('[data-guide-act]');
+  if (act) {
+    const i = Number(act.dataset.guideAct);
+    const st = g.steps[i];
+    const p = findPrinter(g.printerKey);
+    act.disabled = true;
+    try {
+      const { command } = await api('POST', '/api/printers/commands', { agent_id: p.agent_id, printer: p.name, action: st.action.action, params: st.action.params || {} });
+      g.cmd[i] = command.id;
+      watchCommand(command.id, p.name);
+      renderFixGuide(true);
+    } catch (err) {
+      toast(err.message, true);
+      act.disabled = false;
+    }
+  }
+}
+
+function refreshFixGuide() { if (fixGuide) renderFixGuide(false); }
+
+// ---------------------------------------------------------------
+// One printer: overview, features, settings, queue, activity
+// ---------------------------------------------------------------
+const detailState = { agentId: null, name: '', tab: 'overview', data: null, sig: '' };
+
+function setupPrinterDetail() {
+  wireGoLinks($('view-printer'));
+  const tabs = [...$('printer-tabs').querySelectorAll('[role="tab"]')];
+  const select = (tab, focus) => {
+    detailState.tab = tab.dataset.tab;
+    tabs.forEach((t) => { const on = t === tab; t.setAttribute('aria-selected', on); t.tabIndex = on ? 0 : -1; });
+    $('printer-panel').setAttribute('aria-labelledby', tab.id);
+    if (focus) tab.focus();
+    renderPrinterDetail(true);
+  };
+  $('printer-tabs').addEventListener('click', (e) => { const t = e.target.closest('[role="tab"]'); if (t) select(t); });
+  $('printer-tabs').addEventListener('keydown', (e) => {
+    const i = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+    const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    select(tabs[(to + tabs.length) % tabs.length], true);
+  });
+  $('printer-pick').addEventListener('change', (e) => navigateTo(`printer/${e.target.value}`));
+  $('printer-panel').addEventListener('click', (e) => {
+    if (e.target.closest('[data-refresh-features]')) {
+      e.target.closest('[data-refresh-features]').disabled = true;
+      loadPrinterDetail(true).catch((err) => toast(err.message, true));
+      return;
+    }
+    onPrinterAction(e);
+  });
+  setInterval(() => { if (!document.hidden && currentView === 'printer' && !fixGuide) loadPrinterDetail().catch(() => {}); }, 4000);
+}
+
+async function openPrinterDetail(param) {
+  const [agentId, ...rest] = String(param || '').split('/');
+  detailState.agentId = Number(agentId);
+  detailState.name = rest.join('/');
+  detailState.data = null;
+  detailState.sig = '';
+  $('printer-panel').innerHTML = '<div class="card"><div class="skeleton" style="height:180px;"></div></div>';
+  if (!printerList.length) {
+    try { printerList = (await api('GET', '/api/printers?glance=1')).printers; } catch (_) { /* picker stays short */ }
+  }
+  await loadPrinterDetail();
+}
+
+async function loadPrinterDetail(refresh) {
+  if (!detailState.agentId) return;
+  const q = new URLSearchParams({ agent_id: detailState.agentId, printer: detailState.name });
+  if (refresh) q.set('refresh', '1');
+  let data;
+  try {
+    data = await api('GET', `/api/printers/detail?${q.toString()}`);
+  } catch (err) {
+    $('h-printer').textContent = 'Printer not found';
+    $('printer-sub').textContent = 'It may have been removed from its PC.';
+    $('printer-panel').innerHTML = `<div class="card">${emptyState('This printer is no longer reported. Go back to all printers.')}</div>`;
+    return;
+  }
+  const p = data.printer;
+  trackIssues(p);
+  const i = printerList.findIndex((x) => x.key === p.key);
+  if (i >= 0) printerList[i] = p; else printerList.push(p);
+  detailState.data = data;
+  const [label, kind] = HEALTH[p.health] || HEALTH.offline;
+  $('h-printer').innerHTML = `${escapeHtml(p.name)} <span class="badge ${kind} health-pill">${p.health === 'busy' ? '<span class="pulse-dot" aria-hidden="true"></span>' : ''}${label}</span>`;
+  $('printer-sub').textContent = [data.identity.model, `on ${p.agent_label}`, p.host].filter(Boolean).join(' · ');
+  $('printer-pick').innerHTML = printerList.map((x) => `<option value="${x.agent_id}/${escapeHtml(x.name)}"${x.key === p.key ? ' selected' : ''}>${escapeHtml(x.name)} (${escapeHtml(x.agent_label)})</option>`).join('');
+  renderPrinterDetail(false);
+  refreshFixGuide();
+}
+
+function featureTile(f, i) {
+  const icon = { yes: '<path d="M6 12.5l4 4 8-9"/>', no: '<path d="M7 7l10 10M17 7L7 17"/>', unknown: '<path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17h.01"/>' }[f.status];
+  return `<div class="feature-tile is-${f.status}" style="--i:${i}">
+    <span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${icon}</svg></span>
+    <div style="min-width:0;">
+      <div class="feature-label">${escapeHtml(f.label)} <span class="sr-only">${f.status === 'yes' ? 'supported' : f.status === 'no' ? 'not supported' : 'not reported'}</span></div>
+      <div class="small">${f.value ? escapeHtml(f.value) : `<span class="muted">${f.status === 'unknown' ? 'Not reported' : f.status === 'yes' ? 'Yes' : 'No'}</span>`}</div>
+      ${f.detail ? `<div class="small" style="color:var(--warn-ink);">${escapeHtml(f.detail)}</div>` : ''}
+      ${f.sources.length ? `<div class="feature-src">${f.sources.map((s) => `<span>${escapeHtml(s)}</span>`).join('')}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderPrinterDetail(force) {
+  const data = detailState.data;
+  if (!data) return;
+  const p = data.printer;
+  const panel = $('printer-panel');
+  const { _newIssues: _n, updated_at: _u, ...stable } = p;
+  const sig = JSON.stringify([detailState.tab, stable, detailState.tab === 'overview' ? null : { ...data, printer: null }]);
+  const busy = panel.contains(document.activeElement) && document.activeElement !== panel;
+  if (!force && (sig === detailState.sig || busy)) return;
+  detailState.sig = sig;
+  const tab = detailState.tab;
+  let html = '';
+  if (tab === 'overview') {
+    html = printerCard(p, { detail: true });
+  } else if (tab === 'features') {
+    const id = data.identity;
+    const info = [
+      ['Model', id.model], ['Serial number', id.serial], ['Network address', id.host], ['Network name', id.network_name],
+      ['Location', id.location], ['Driver', id.driver && [id.driver.name, id.driver.manufacturer, id.driver.version && `v${id.driver.version}`].filter(Boolean).join(' · ')],
+      ['Port', id.port], ['Shared', id.shared ? `Yes${id.share_name ? ` as ${id.share_name}` : ''}` : ''],
+      ['Pages printed (lifetime)', id.page_count != null ? id.page_count.toLocaleString() : ''], ['On for', id.uptime_hours != null ? `${id.uptime_hours} h` : ''], ['Comment', id.comment]
+    ].filter(([, v]) => v);
+    html = `
+      <div class="card stack">
+        <div class="spread" style="gap:12px; flex-wrap:wrap;">
+          <div><h2 style="margin:0;">What ${escapeHtml(p.name)} can do</h2>
+            <p class="muted small" style="margin:4px 0 0;">From the driver, Windows and the printer itself. ${data.info_updated_at ? `Read ${escapeHtml(formatDbDate(data.info_updated_at))}.` : ''}</p></div>
+          <button type="button" class="btn btn-outline btn-sm" data-refresh-features${data.info_pending ? ' disabled' : ''}>${data.info_pending ? '<span class="spinner" aria-hidden="true"></span>Reading from the printer' : 'Read again'}</button>
+        </div>
+        ${data.info_pending && !data.info_updated_at ? '<div class="feature-grid">' + Array.from({ length: 6 }, (_, i) => `<div class="feature-tile skeleton" style="--i:${i}; height:64px;"></div>`).join('') + '</div>' : `<div class="feature-grid">${data.features.map(featureTile).join('')}</div>`}
+        ${p.stale && !data.info_updated_at ? '<p class="muted small" style="margin:0;">The PC with this printer isn\'t reporting, so its features can\'t be read right now.</p>' : ''}
+      </div>
+      <div class="grid grid-2">
+        <div class="card stack"><h2 style="margin:0;">Details</h2>${info.length ? `<dl class="info-list">${info.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join('')}</dl>` : '<p class="muted" style="margin:0;">Not read yet.</p>'}</div>
+        <div class="card stack"><h2 style="margin:0;">Toner and ink</h2>${data.supplies.length ? data.supplies.map((s) => `
+          <div class="tray-row"><span class="tray-name">${escapeHtml(s.description)}</span>
+          <span class="tray-bar" aria-hidden="true"><span style="width:${s.percent != null ? s.percent : 50}%; background:${COLORANT[s.colorant] || 'var(--accent)'}"${s.percent == null ? ' class="partial"' : ''}></span></span>
+          <span class="tray-level">${s.percent != null ? `${s.percent}%` : 'OK'}</span></div>`).join('') : '<p class="muted" style="margin:0;">This printer doesn\'t report toner levels.</p>'}</div>
+      </div>`;
+  } else if (tab === 'settings') {
+    const cfg = p.config;
+    const s = data.settings;
+    const canSet = p.actions.includes('set_defaults');
+    const opt = (v, l, cur) => `<option value="${v}"${String(cur) === String(v) ? ' selected' : ''}>${l}</option>`;
+    html = `
+      <div class="card stack">
+        <div><h2 style="margin:0;">Default settings</h2><p class="muted small" style="margin:4px 0 0;">What new jobs on ${escapeHtml(p.name)} use unless the customer changes them. Only options this printer supports are offered.</p></div>
+        ${!cfg ? '<p class="muted" style="margin:0;">Windows didn\'t report this printer\'s settings.</p>' : canSet ? `
+        <form class="defaults-form" data-key="${escapeHtml(p.key)}">
+          <div class="field"><label for="ds-duplex">Sides</label><select id="ds-duplex" name="duplex">${s.duplex.map((v) => opt(v, DUPLEX_LABEL[v], cfg.duplex)).join('')}</select></div>
+          <div class="field"><label for="ds-color">Colour</label><select id="ds-color" name="color">${s.color.map((v) => opt(v, v ? 'Colour' : 'Black &amp; white', cfg.color)).join('')}</select></div>
+          <div class="field"><label for="ds-paper">Paper</label><select id="ds-paper" name="paper_size">${s.paper_size.map((v) => opt(v, v, cfg.paper_size)).join('')}${s.paper_size.includes(cfg.paper_size) ? '' : `<option value="" selected>${escapeHtml(cfg.paper_size || 'Other')}</option>`}</select></div>
+          <button type="button" class="btn btn-primary btn-sm" data-printer-act="set_defaults" data-key="${escapeHtml(p.key)}"${p.pending.some((c) => c.action === 'set_defaults') ? ' disabled' : ''}>Apply</button>
+        </form>` : `<p style="margin:0;">${escapeHtml(DUPLEX_LABEL[cfg.duplex] || cfg.duplex)} · ${cfg.color ? 'colour' : 'black &amp; white'} · ${escapeHtml(cfg.paper_size)}</p><p class="muted small" style="margin:0;">Only an admin can change these.</p>`}
+        ${pendingHtml(p)}
+      </div>
+      ${data.properties.length ? `<details class="card"><summary><strong>Driver options</strong> <span class="muted small">(${data.properties.length}, read only)</span></summary>
+        <dl class="info-list" style="margin-top:12px;">${data.properties.map((x) => `<dt class="mono small">${escapeHtml(x.name)}</dt><dd>${escapeHtml(x.value)}</dd>`).join('')}</dl></details>` : ''}`;
+  } else if (tab === 'queue') {
+    html = `<div class="card stack">${pendingHtml(p)}${queueTableHtml(p)}${controlsHtml(p)}</div>`;
+  } else {
+    const t = data.today;
+    html = `
+      <div class="grid grid-4">${[
+        { label: 'Jobs today', value: t.jobs, sub: `${plural(t.two_sided_jobs, 'job')} two-sided` },
+        { label: 'Pages today', value: t.pages, sub: `${t.colour_pages} colour · ${t.sheets} sheets` },
+        { label: 'Photocopies today', value: t.copied_pages, sub: 'From its page counter' },
+        { label: 'Print speed', value: p.speed.source === 'learned' ? `${p.speed.ppm}/min` : '—', sub: p.speed.source === 'learned' ? 'Measured from jobs here' : 'Not measured yet' }
+      ].map(kpiCard).join('')}</div>
+      <div class="card stack"><h2 style="margin:0;">Actions from this app</h2>${data.log.length ? `
+        <div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Result</th></tr></thead><tbody>${data.log.map((c) => `
+          <tr><td class="small">${escapeHtml(formatDbDate(c.created_at))}</td><td>${escapeHtml(c.requested_by_name || 'Automatic')}</td>
+          <td>${escapeHtml(c.verb)}${c.params && c.params.document ? ` "${escapeHtml(c.params.document)}"` : ''}</td>
+          <td>${c.status === 'done' ? '<span class="badge ok">Done</span>' : c.status === 'queued' || c.status === 'sent' ? '<span class="badge info">Waiting</span>' : `<span class="badge warn">${escapeHtml(c.status)}</span> <span class="small">${escapeHtml(c.error || '')}</span>`}</td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="muted" style="margin:0;">No actions yet.</p>'}</div>`;
+  }
+  panel.innerHTML = `<div class="stack tab-in">${html}</div>`;
+}
+
 async function onPrinterAction(e) {
+  const g = e.target.closest('[data-guide]');
+  if (g) { openFixGuide(g.dataset.key, g.dataset.guide); return; }
   const b = e.target.closest('[data-printer-act]');
   if (!b || b.disabled) return;
-  const p = printerByKey(b.dataset.key);
+  const p = findPrinter(b.dataset.key);
   if (!p) return;
   const action = b.dataset.printerAct;
   const params = {};
@@ -1256,7 +1743,7 @@ async function onPrinterAction(e) {
   const send = async () => {
     const { command } = await api('POST', '/api/printers/commands', { agent_id: p.agent_id, printer: p.name, action, params });
     watchCommand(command.id, p.name);
-    await loadPrinters();
+    await (currentView === 'printer' ? loadPrinterDetail() : loadPrinters());
   };
   const confirmText = {
     cancel_job: [`Cancel "${params.document}"?`, 'It is removed from the queue. Pages already printed stay printed.', 'Cancel job'],
@@ -1284,12 +1771,14 @@ function watchCommand(id, printerName) {
         const removed = command.result && command.result.removed;
         toast(`${printerName}: ${command.verb}${command.params.document ? ` "${command.params.document}"` : ''} done${removed != null ? ` (${plural(removed, 'job')} removed)` : ''}.`);
         if (currentView === 'printers') loadPrinters().catch(() => {});
+        if (currentView === 'printer') loadPrinterDetail().catch(() => {});
         return;
       }
       if (command.status === 'failed' || command.status === 'expired') {
         watchedCommands.delete(id);
         toast(`${printerName}: ${command.verb} didn't work. ${command.error || ''}`, true);
         if (currentView === 'printers') loadPrinters().catch(() => {});
+        if (currentView === 'printer') loadPrinterDetail().catch(() => {});
         return;
       }
     } catch (_) { /* keep trying */ }

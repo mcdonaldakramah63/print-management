@@ -130,6 +130,12 @@ panel from the till, so nobody has to walk to it:
   page; admins can also clear the queue and change default sides, colour
   and paper size.
 
+Each issue has **Show me how**: an animated step-by-step guide whose steps
+tick themselves off as the printer reports them done (door opened, jam
+cleared, door closed...). Click a printer's name for its own page: its
+features (read from the driver's print capabilities, Windows and the
+printer itself), the default settings it supports, its queue and activity.
+
 How it works: the agent runs `printer-control.ps1` as a long-lived helper
 and syncs with the app (every 3 s while someone has the page open, else
 every 30 s). Actions wait in the app until the agent collects them; each

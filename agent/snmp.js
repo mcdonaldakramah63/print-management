@@ -399,6 +399,60 @@ async function readDeviceStatus(host, options = {}) {
   }
 }
 
+// ---------------------------------------------------------------
+// Device identity and features
+// ---------------------------------------------------------------
+const INFO = {
+  sysName: '1.3.6.1.2.1.1.5.0',
+  sysLocation: '1.3.6.1.2.1.1.6.0',
+  sysUpTime: '1.3.6.1.2.1.1.3.0',
+  serial: '1.3.6.1.2.1.43.5.1.1.17',        // prtGeneralSerialNumber
+  markTech: '1.3.6.1.2.1.43.10.2.1.2',      // prtMarkerMarkTech
+  interpreters: '1.3.6.1.2.1.43.15.1.1',    // prtInterpreterEntry (5 = description)
+  outputs: '1.3.6.1.2.1.43.9.2.1',          // prtOutputEntry (7 = name, 4 = max, 5 = remaining)
+  mediaPaths: '1.3.6.1.2.1.43.13.4.1'       // prtMediaPathEntry (2 = speed unit, 4 = max speed, 9 = type, 10 = description)
+};
+const MARK_TECH = { 3: 'LED', 4: 'Laser', 5: 'Electrophotographic', 12: 'Inkjet', 13: 'Solid ink', 14: 'Inkjet', 16: 'Thermal transfer', 17: 'Thermal' };
+const PATH_TYPE = { 3: 'duplex_long', 4: 'duplex_short', 5: 'simplex' };
+
+/** Who the printer is and what it can do, from its own MIBs (all parts optional). */
+async function readDeviceInfo(host, options = {}) {
+  const s = new SnmpSession(host, { timeoutMs: 1500, retries: 1, ...options, version: options.version ?? 1 });
+  try {
+    const get = (oid) => s.get(oid).catch(() => undefined);
+    const walk = (oid, max) => s.walk(oid, max).catch(() => []);
+    const model = (await get(OID.deviceDescr)) || (await get(OID.sysDescr)) || '';
+    const serial = (await walk(INFO.serial, 2))[0];
+    const tech = (await walk(INFO.markTech, 2))[0];
+    const life = await walk(OID.lifeCount, 4);
+    const interpreters = tableRows(await walk(INFO.interpreters, 200), INFO.interpreters);
+    const outputs = tableRows(await walk(INFO.outputs, 200), INFO.outputs);
+    const paths = tableRows(await walk(INFO.mediaPaths, 200), INFO.mediaPaths);
+    const colorants = (await walk(OID.colorants, 32)).map((r) => String(r.value || '').toLowerCase()).filter(Boolean);
+    const upTicks = await get(INFO.sysUpTime);
+    // Rated speed: the fastest media path, in impressions (7) or sheets (8) per hour.
+    const speeds = paths.map((p) => ({ unit: Number(p[2]), max: Number(p[4]) }))
+      .filter((p) => (p.unit === 7 || p.unit === 8) && p.max > 0).map((p) => Math.round(p.max / 60));
+    return {
+      model: String(model).slice(0, 120),
+      name: String((await get(INFO.sysName)) || '').slice(0, 80),
+      location: String((await get(INFO.sysLocation)) || '').slice(0, 120),
+      serial: serial ? String(serial.value || '').trim().slice(0, 60) : '',
+      technology: tech ? MARK_TECH[Number(tech.value)] || '' : '',
+      page_count: life.length ? Math.max(...life.map((r) => Number(r.value) || 0)) : null,
+      uptime_hours: Number.isFinite(upTicks) ? Math.round(upTicks / 360000) : null,
+      languages: interpreters.map((i) => String(i[5] || '').trim()).filter(Boolean).slice(0, 12),
+      output_bins: outputs.map((o) => String(o[7] || '').trim()).filter(Boolean).slice(0, 12),
+      duplex_path: paths.some((p) => PATH_TYPE[Number(p[9])] === 'duplex_long' || PATH_TYPE[Number(p[9])] === 'duplex_short'),
+      media_paths: paths.map((p) => String(p[10] || '').trim()).filter(Boolean).slice(0, 8),
+      rated_ppm: speeds.length ? Math.max(...speeds) : null,
+      colorants
+    };
+  } finally {
+    s.close();
+  }
+}
+
 /** Colorant names the printer reports ("black", "cyan", ...). */
 async function readColorants(host, options = {}) {
   const s = new SnmpSession(host, { ...options, version: options.version ?? 1 });
@@ -409,4 +463,4 @@ async function readColorants(host, options = {}) {
   }
 }
 
-module.exports = { SnmpSession, readPrinter, readCounters, readColorants, readDeviceStatus, decodeErrorBits, PANEL, supplyPercent, buildRequest, parseResponse, encOid, decOid, OID, tlv, encInt };
+module.exports = { SnmpSession, readPrinter, readCounters, readColorants, readDeviceStatus, readDeviceInfo, decodeErrorBits, PANEL, supplyPercent, buildRequest, parseResponse, encOid, decOid, OID, tlv, encInt };

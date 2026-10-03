@@ -360,6 +360,13 @@ CREATE TABLE IF NOT EXISTS printer_commands (
   finished_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_printer_commands_agent ON printer_commands(agent_id, status);
+CREATE TABLE IF NOT EXISTS printer_info (
+  agent_id      INTEGER NOT NULL REFERENCES agents(id),
+  printer_name  TEXT NOT NULL,
+  data          TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  PRIMARY KEY (agent_id, printer_name)
+);
 `);
 
 // ---------- Seed default settings row ----------

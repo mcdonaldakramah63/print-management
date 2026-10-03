@@ -241,6 +241,26 @@
       <div id="printers-wrap" class="stack"></div>
     </section>
 
+    <!-- ============ ONE PRINTER (everyone) ============ -->
+    <section class="view" id="view-printer" aria-labelledby="h-printer">
+      <div class="page-head">
+        <div style="min-width:0;">
+          <a class="back-link" href="#printers" data-go="printers">&larr; All printers</a>
+          <h1 id="h-printer" style="margin-top:6px;">Printer</h1>
+          <div class="muted" id="printer-sub"></div>
+        </div>
+        <div class="page-actions"><div class="field"><label for="printer-pick">Printer</label><select id="printer-pick"></select></div></div>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Printer sections" id="printer-tabs">
+        <button type="button" role="tab" id="ptab-overview" aria-controls="printer-panel" data-tab="overview" aria-selected="true">Overview</button>
+        <button type="button" role="tab" id="ptab-features" aria-controls="printer-panel" data-tab="features" aria-selected="false" tabindex="-1">Features</button>
+        <button type="button" role="tab" id="ptab-settings" aria-controls="printer-panel" data-tab="settings" aria-selected="false" tabindex="-1">Settings</button>
+        <button type="button" role="tab" id="ptab-queue" aria-controls="printer-panel" data-tab="queue" aria-selected="false" tabindex="-1">Queue</button>
+        <button type="button" role="tab" id="ptab-activity" aria-controls="printer-panel" data-tab="activity" aria-selected="false" tabindex="-1">Activity</button>
+      </div>
+      <div id="printer-panel" role="tabpanel" aria-labelledby="ptab-overview" tabindex="0"></div>
+    </section>
+
     <!-- ============ PRINT MONITOR (admin) ============ -->
     <section class="view" id="view-print-monitor" aria-labelledby="h-pm">
       <div class="page-head">

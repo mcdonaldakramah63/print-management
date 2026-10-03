@@ -17,6 +17,15 @@ router.get('/', requireAuth, (req, res) => {
   res.json({ printers: control.listPrinters(req.session.user.role), now: new Date().toISOString() });
 });
 
+// One printer in full. ?refresh=1 re-reads its features from the PC.
+router.get('/detail', requireAuth, (req, res) => {
+  control.markViewed();
+  const detail = control.printerDetail(Number(req.query.agent_id), String(req.query.printer || ''), req.session.user.role,
+    { refresh: req.query.refresh === '1' });
+  if (!detail) return res.status(404).json({ error: 'Printer not found' });
+  res.json(detail);
+});
+
 // Ask a printer's agent to do something.
 router.post('/commands', requireAuth, (req, res) => {
   try {

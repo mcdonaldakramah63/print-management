@@ -9,7 +9,7 @@
     "build:exe": "node scripts/build-exe.js --target win-x64",
     "build:exe:linux": "node scripts/build-exe.js --target linux-x64",
     "test:agent": "node agent/test/snmp.test.js && node agent/test/copyMonitor.test.js && node agent/test/printerControl.test.js",
-    "test:server": "node server/test/printerDoctor.test.js",
+    "test:server": "node server/test/printerDoctor.test.js && node server/test/printerFeatures.test.js",
     "test": "npm run test:agent && npm run test:server"
   },
   "engines": {

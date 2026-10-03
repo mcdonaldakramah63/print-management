@@ -410,6 +410,188 @@ td .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wra
   .queue-table td[data-label="Progress"]::before { display: block; }
 }
 
+/* ---------- Printers: motion ---------- */
+.printer-card.enter { animation: card-in .45s cubic-bezier(.2,.8,.2,1) both; }
+.printer-card.enter:nth-child(2) { animation-delay: .06s; }
+.printer-card.enter:nth-child(3) { animation-delay: .12s; }
+@keyframes card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.issue.is-new { animation: issue-in .5s cubic-bezier(.2,.8,.2,1) both; }
+.issue.sev-critical.is-new .issue-icon { animation: icon-pop .5s .2s both, alarm 1.6s .7s 3; }
+@keyframes issue-in { from { opacity: 0; transform: translateX(-10px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes icon-pop { 0% { transform: scale(0); } 70% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes alarm { 0%, 100% { box-shadow: 0 0 0 0 rgba(180, 35, 24, .45); } 60% { box-shadow: 0 0 0 8px rgba(180, 35, 24, 0); } }
+.issue.sev-fixed { background: var(--ok-bg); border-color: #BFE0CB; color: var(--ok-ink); }
+.issue.sev-fixed .issue-icon { background: #2F8F5B; }
+.issue.sev-fixed .issue-icon svg { width: 16px; height: 16px; }
+.issue.is-resolved { animation: resolved 7s ease forwards; overflow: hidden; }
+@keyframes resolved { 0% { opacity: 0; transform: scale(.97); } 6% { opacity: 1; transform: none; } 85% { opacity: 1; max-height: 80px; } 100% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-width: 0; } }
+.draw-check { stroke-dasharray: 24; stroke-dashoffset: 24; animation: draw .5s .15s ease-out forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.health-pill.danger { animation: pill-pulse 2s ease-in-out infinite; }
+@keyframes pill-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(180, 35, 24, .35); } 50% { box-shadow: 0 0 0 6px rgba(180, 35, 24, 0); } }
+.pulse-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: 1px; animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.lcd-cursor { display: inline-block; width: 8px; height: 14px; margin-left: 3px; vertical-align: -2px; background: currentColor; animation: blink 1s steps(1) infinite; }
+.lcd.lcd-dead { background: #2A2D2B; color: #8E958F; }
+.tray-bar.live > span { background-image: repeating-linear-gradient(-45deg, rgba(255,255,255,.35) 0 6px, transparent 6px 12px); background-size: 17px 17px; animation: stripes .8s linear infinite; }
+@keyframes stripes { to { background-position: 17px 0; } }
+.pending-chip { animation: issue-in .3s ease both; }
+.tab-in { animation: fade-up .25s ease both; }
+@keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.skeleton { background: linear-gradient(90deg, var(--line-soft) 25%, var(--surface-2) 50%, var(--line-soft) 75%); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; border-radius: var(--radius-sm); }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.printer-link { color: inherit; text-decoration: none; background-image: linear-gradient(currentColor, currentColor); background-size: 0 2px; background-repeat: no-repeat; background-position: 0 100%; transition: background-size .25s ease; }
+.printer-link:hover, .printer-link:focus-visible { background-size: 100% 2px; }
+.guide-btn svg { width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px; }
+.back-link { font-size: 14px; color: var(--ink-2); text-decoration: none; }
+.back-link:hover { color: var(--accent); }
+
+/* ---------- One printer: tabs, features ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs [role="tab"] { appearance: none; border: none; background: none; font: inherit; font-weight: 600; color: var(--ink-2); padding: 10px 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; white-space: nowrap; transition: color .2s, border-color .2s; }
+.tabs [role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tabs [role="tab"]:hover { color: var(--ink); }
+#printer-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius-sm); }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.feature-tile { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface-2); animation: fade-up .35s ease both; animation-delay: calc(var(--i, 0) * 35ms); }
+.feature-icon { width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.feature-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.is-yes .feature-icon { background: var(--ok-bg); color: var(--ok-ink); }
+.is-no .feature-icon { background: var(--line-soft); color: var(--ink-2); }
+.is-unknown .feature-icon { background: var(--surface); color: var(--ink-2); border: 1px dashed var(--input-line); }
+.feature-label { font-weight: 600; }
+.feature-src { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.feature-src span { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-soft); color: var(--ink-2); }
+.info-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; }
+.info-list dt { color: var(--ink-2); }
+.info-list dd { margin: 0; overflow-wrap: anywhere; }
+details.card summary { cursor: pointer; }
+
+/* ---------- Guided fix ---------- */
+.guide { display: grid; grid-template-columns: minmax(180px, 230px) minmax(0, 1fr); gap: 20px; min-height: 300px; }
+.guide-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.guide-steps li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 8px; align-items: start; padding: 8px; border-radius: var(--radius-sm); font-size: 14px; color: var(--ink-2); transition: background .3s, color .3s; }
+.guide-steps li.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+.guide-steps li.done { color: var(--ok-ink); }
+.step-dot { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; border: 2px solid currentColor; }
+.guide-steps li.done .step-dot { background: #2F8F5B; border-color: #2F8F5B; color: #fff; animation: icon-pop .45s both; }
+.guide-steps li.done .step-dot svg { width: 14px; height: 14px; }
+.guide-steps li.active .step-dot { background: var(--accent); border-color: var(--accent); color: #fff; }
+.guide-stage { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.guide-art { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); display: flex; justify-content: center; padding: 8px; }
+.guide-art.swap { animation: fade-up .35s ease both; }
+.guide-text { display: flex; flex-direction: column; gap: 6px; }
+.guide-text h3 { margin: 0; font-family: var(--font-head); font-size: 20px; }
+.guide-live { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-ink); }
+.live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 rgba(35, 70, 216, .5); animation: radar 1.6s ease-out infinite; }
+@keyframes radar { to { box-shadow: 0 0 0 10px rgba(35, 70, 216, 0); } }
+.guide-done { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; }
+.guide-done h3 { margin: 0; font-family: var(--font-head); font-size: 22px; }
+@media (max-width: 640px) { .guide { grid-template-columns: minmax(0, 1fr); } .guide-steps li:not(.active) { display: none; } }
+
+/* Illustrations. Base styles are the still frame that explains the step. */
+.fix-art { width: 100%; max-width: 360px; height: auto; display: block; }
+.fix-art .a-shadow { fill: rgba(22, 24, 29, .08); }
+.fix-art .a-body { fill: #E9EBE6; stroke: #16181D; stroke-width: 2.5; }
+.fix-art .a-slot, .fix-art .a-slot-front { fill: #C9CCC4; stroke: #16181D; stroke-width: 2; }
+.fix-art .a-panel { fill: #2C2F36; }
+.fix-art .a-screen { fill: #CFF5D9; }
+.fix-art .a-cavity { fill: #2C2F36; }
+.fix-art .a-hidden { display: none; }
+.fix-art .a-door rect:first-child, .fix-art .a-door-static { fill: #F7F8F5; stroke: #16181D; stroke-width: 2.5; }
+.fix-art .a-handle { fill: #9EA29A; }
+.fix-art .a-tray rect:first-child { fill: #F7F8F5; stroke: #16181D; stroke-width: 2.5; }
+.fix-art .a-sheet { fill: #FFFFFF; stroke: #16181D; stroke-width: 1.8; }
+.fix-art .a-sheet.back { fill: #F1F2EF; }
+.fix-art .a-lines, .fix-art .a-lcd-lines { stroke: #9EA29A; stroke-width: 2.5; stroke-linecap: round; fill: none; }
+.fix-art .a-arrow { fill: none; stroke: #2346D8; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+.fix-art .a-door, .fix-art .a-tray, .fix-art .a-jam, .fix-art .a-stack, .fix-art .a-cart-old, .fix-art .a-cart-new, .fix-art .a-out, .fix-art .a-feed, .fix-art .a-plug, .fix-art .a-knob, .fix-art .a-doc-top { transform-box: fill-box; transform-origin: 50% 100%; }
+.art-open-door .a-door, .art-remove-jam .a-door, .a-door-open { transform: scaleY(.16); }
+.art-remove-jam .a-jam { transform: translateY(26px); }
+.art-close-door .a-ring { fill: none; stroke: #2F8F5B; stroke-width: 3; opacity: .9; transform-box: fill-box; transform-origin: center; }
+.art-load-paper .a-tray { transform: translateY(18px); }
+.fix-art .a-cart-old { fill: #2C2F36; opacity: 0; }
+.fix-art .a-cart-new { fill: #2346D8; }
+.art-empty-output .a-out { transform: translateY(-14px); opacity: .5; }
+.fix-art .a-button { fill: #2F8F5B; }
+.fix-art .a-ripple { fill: none; stroke: #2F8F5B; stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; }
+.fix-art .a-power circle { fill: #2C2F36; }
+.fix-art .a-power-icon { fill: none; stroke: #CFF5D9; stroke-width: 2; stroke-linecap: round; }
+.fix-art .a-port { fill: #2C2F36; }
+.fix-art .a-plug rect { fill: #2346D8; }
+.fix-art .a-plug path { stroke: #2346D8; stroke-width: 4; stroke-linecap: round; fill: none; }
+.fix-art .a-wifi path { fill: none; stroke: #2346D8; stroke-width: 3.5; stroke-linecap: round; }
+.fix-art .a-monitor { fill: #2C2F36; }
+.fix-art .a-screen-big { fill: #F7F8F5; }
+.fix-art .a-stand { fill: #9EA29A; }
+.fix-art .a-text { font: 600 12px var(--font-body); fill: #16181D; }
+.fix-art .a-track { fill: #2F8F5B; }
+.fix-art .a-knob { fill: #FFFFFF; transform: translateX(22px); transform-origin: center; }
+.fix-art .a-spin { fill: none; stroke: #2346D8; stroke-width: 5; stroke-linecap: round; stroke-dasharray: 80 40; transform-box: fill-box; transform-origin: center; }
+.fix-art .a-x { stroke: #B42318; stroke-width: 6; stroke-linecap: round; }
+.fix-art .a-lens { fill: rgba(255,255,255,.85); stroke: #16181D; stroke-width: 3; }
+.fix-art .a-lens-handle { stroke: #16181D; stroke-width: 6; stroke-linecap: round; }
+.fix-art .a-ok-ring { fill: var(--ok-bg); stroke: #2F8F5B; stroke-width: 5; }
+.fix-art .a-ok-check { fill: none; stroke: #2F8F5B; stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; }
+.fix-art .a-spark { fill: #2F8F5B; opacity: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .art-open-door .a-door { animation: door-open 3.2s ease-in-out infinite; }
+  @keyframes door-open { 0%, 15% { transform: scaleY(1); } 45%, 82% { transform: scaleY(.16); } 100% { transform: scaleY(1); } }
+  .fix-art .a-arrow { animation: bob 1.1s ease-in-out infinite; }
+  @keyframes bob { 50% { transform: translateY(5px); } }
+  .art-remove-jam .a-jam { animation: pull 2.6s ease-in-out infinite; }
+  @keyframes pull { 0%, 20% { transform: translateY(0); opacity: 1; } 70% { transform: translateY(40px) rotate(-4deg); opacity: 1; } 100% { transform: translateY(54px) rotate(-6deg); opacity: 0; } }
+  .art-close-door .a-door { animation: door-close 3s ease-in-out infinite; }
+  @keyframes door-close { 0%, 12% { transform: scaleY(.16); } 45%, 100% { transform: scaleY(1); } }
+  .art-close-door .a-ring { animation: click-ring 3s ease-out infinite; }
+  @keyframes click-ring { 0%, 44% { opacity: 0; transform: scale(.4); } 50% { opacity: .9; } 75%, 100% { opacity: 0; transform: scale(2.6); } }
+  .art-load-paper .a-tray { animation: tray 4s ease-in-out infinite; }
+  @keyframes tray { 0%, 8% { transform: translateY(0); } 22%, 72% { transform: translateY(18px); } 88%, 100% { transform: translateY(0); } }
+  .art-load-paper .a-stack { animation: drop 4s ease-in-out infinite; }
+  @keyframes drop { 0%, 25% { transform: translateY(-46px); opacity: 0; } 32% { opacity: 1; } 52%, 100% { transform: translateY(0); opacity: 1; } }
+  .fix-art .a-cart-old { animation: cart-out 4s ease-in-out infinite; }
+  @keyframes cart-out { 0%, 10% { transform: translateY(0); opacity: 1; } 40%, 100% { transform: translateY(-60px); opacity: 0; } }
+  .fix-art .a-cart-new { animation: cart-in 4s ease-in-out infinite; }
+  @keyframes cart-in { 0%, 45% { transform: translateY(-60px); opacity: 0; } 55% { opacity: 1; } 85%, 100% { transform: translateY(0); opacity: 1; } }
+  .art-empty-output .a-out { animation: lift 2.8s ease-in-out infinite; }
+  @keyframes lift { 0%, 20% { transform: translateY(0); opacity: 1; } 80%, 100% { transform: translateY(-26px); opacity: 0; } }
+  .fix-art .a-ripple { animation: ripple 1.8s ease-out infinite; }
+  .fix-art .a-ripple.r2 { animation-delay: .6s; }
+  @keyframes ripple { 0% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(3.2); } }
+  .fix-art .a-button { animation: press 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes press { 0%, 100% { transform: scale(1); } 12% { transform: scale(.8); } }
+  .fix-art .a-power circle { animation: power-glow 2.4s ease-in-out infinite; }
+  @keyframes power-glow { 0%, 40% { fill: #2C2F36; } 55%, 100% { fill: #2F8F5B; } }
+  .art-power .a-screen { animation: screen-on 2.4s ease-in-out infinite; }
+  @keyframes screen-on { 0%, 50% { fill: #2C2F36; } 70%, 100% { fill: #CFF5D9; } }
+  .fix-art .a-plug { animation: plug 2.6s ease-in-out infinite; }
+  @keyframes plug { 0%, 15% { transform: translateX(16px); } 50%, 100% { transform: translateX(0); } }
+  .fix-art .a-wifi path { animation: wave 1.8s ease-in-out infinite; opacity: .2; }
+  .fix-art .a-wifi .w2 { animation-delay: .25s; }
+  .fix-art .a-wifi .w3 { animation-delay: .5s; }
+  @keyframes wave { 30%, 60% { opacity: 1; } }
+  .fix-art .a-feed { animation: feed 2.2s ease-in-out infinite; }
+  @keyframes feed { 0% { transform: translateY(34px); opacity: 0; } 15% { opacity: 1; } 70% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-8px); opacity: 0; } }
+  .fix-art .a-doc-top { animation: dismiss 2.8s ease-in-out infinite; }
+  @keyframes dismiss { 0%, 35% { transform: none; opacity: 1; } 75%, 100% { transform: translateX(70px) rotate(12deg); opacity: 0; } }
+  .fix-art .a-knob { animation: toggle 3s ease-in-out infinite; }
+  .fix-art .a-track { animation: track 3s ease-in-out infinite; }
+  @keyframes toggle { 0%, 25% { transform: translateX(0); } 45%, 100% { transform: translateX(22px); } }
+  @keyframes track { 0%, 25% { fill: #C9CCC4; } 45%, 100% { fill: #2F8F5B; } }
+  .fix-art .a-spin { animation: spin 1.2s linear infinite; }
+  .fix-art .a-zoom { animation: bob 2s ease-in-out infinite; }
+  .art-success .a-ok-ring { stroke-dasharray: 290; stroke-dashoffset: 290; animation: draw .6s ease-out forwards; }
+  .art-success .a-ok-check { stroke-dasharray: 70; stroke-dashoffset: 70; animation: draw .45s .5s ease-out forwards; }
+  .art-success .a-spark { transform-box: fill-box; transform-origin: center; animation: spark .8s .8s ease-out forwards; }
+  @keyframes spark { 0% { opacity: 0; transform: scale(.2); } 40% { opacity: 1; transform: scale(1.3); } 100% { opacity: 0; transform: scale(.6); } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .printer-card.enter, .issue.is-new, .issue.is-resolved, .tab-in, .feature-tile, .pending-chip, .guide-art.swap, .health-pill.danger, .lcd-cursor, .pulse-dot, .live-dot, .skeleton, .tray-bar.live > span, .guide-steps li.done .step-dot, .issue-icon { animation: none !important; }
+  .draw-check { stroke-dashoffset: 0; animation: none; }
+  .issue.is-resolved { opacity: 1; }
+}
+
 @media (max-width: 1100px) {
   .checkout { grid-template-columns: minmax(0, 1fr); }
   .cart { position: static; }

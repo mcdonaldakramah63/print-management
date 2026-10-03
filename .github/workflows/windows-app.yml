@@ -104,6 +104,20 @@ jobs:
           Invoke-PrinterCommand 'resume_printer'
           Write-Host "Printer control OK on $($target.name)"
 
+          # A particular printer's features, read through the real PowerShell host.
+          $q = "agent_id=$($target.agent_id)&printer=$([uri]::EscapeDataString($target.name))"
+          $detail = $null
+          for ($i = 0; $i -lt 30; $i++) {
+            $detail = Invoke-RestMethod "$base/api/printers/detail?$q" -WebSession $s
+            if ($detail.info_updated_at) { break }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $detail.info_updated_at) { Get-Content agent.log; throw 'Printer features were never read' }
+          if (-not $detail.identity.driver.name) { throw "No driver name in printer features: $($detail | ConvertTo-Json -Depth 4)" }
+          Write-Host "Features of $($target.name) via $($detail.identity.driver.name):"
+          $detail.features | ForEach-Object { Write-Host "  $($_.label): $($_.status) $($_.value)" }
+          if (@($detail.features | Where-Object { $_.key -eq 'paper_sizes' -and $_.status -eq 'yes' }).Count -eq 0) { throw 'Paper sizes were not read from the driver' }
+
           Stop-Process -Id $agentProc.Id -Force
           Stop-Process -Id $server.Id -Force
 
