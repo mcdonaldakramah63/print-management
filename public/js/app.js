@@ -66,6 +66,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     setupProducts();
     setupUsers();
     setupSettings();
+    setupRemote();
     refreshUnreviewedCount();
   }
   setupAccount();
@@ -341,6 +342,8 @@ function daysAgoString(n) {
 // Opens a tab synchronously (inside the click handler, so it isn't popup-
 // blocked) that can be pointed at a URL once an async request finishes.
 function openPendingTab() {
+  // The phone app has one window: open receipts and reports in place.
+  if (IN_APP) return { go(url) { window.location.href = url; }, cancel() {} };
   const win = window.open('', '_blank');
   if (win) win.document.write('<p style="font-family:sans-serif;padding:24px;color:#555">Loading&hellip;</p>');
   return {
@@ -356,9 +359,25 @@ function setupNav() {
   document.querySelectorAll('.nav-link[data-view], [data-nav]').forEach((link) => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
+      setDrawer(false);
       navigateTo(link.dataset.view || link.dataset.nav);
     });
   });
+  // Phones: the sidebar becomes a drawer behind a menu button.
+  $('menu-btn').addEventListener('click', () => setDrawer(!document.body.classList.contains('nav-open')));
+  $('nav-scrim').addEventListener('click', () => setDrawer(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('nav-open')) setDrawer(false, true); });
+  window.matchMedia('(min-width: 821px)').addEventListener('change', (e) => { if (e.matches) setDrawer(false); });
+}
+
+function setDrawer(open, returnFocus) {
+  const was = document.body.classList.contains('nav-open');
+  if (was === open) return;
+  document.body.classList.toggle('nav-open', open);
+  $('menu-btn').setAttribute('aria-expanded', String(open));
+  $('menu-btn').setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  if (open) (document.querySelector('.nav-link.active') || document.querySelector('.nav-link')).focus({ preventScroll: true });
+  else if (returnFocus) $('menu-btn').focus();
 }
 
 function navigateTo(target) {
@@ -381,6 +400,8 @@ function navigateTo(target) {
   currentView = view;
   currentRoute = route;
   document.body.dataset.view = view;
+  const link = document.querySelector(`.nav-link[data-view="${navView}"]`);
+  $('mobile-title').textContent = link ? link.textContent.trim() : 'Receipt System';
   if (decodeURIComponent(location.hash.replace('#', '')) !== route) location.hash = route;
   window.scrollTo(0, 0);
 
@@ -1060,7 +1081,7 @@ function setupHistory() {
 
 async function loadHistory() {
   const params = historyParams();
-  $('history-export').href = `/api/sales/export.csv?${params.toString()}`;
+  $('history-export').href = `api/sales/export.csv?${params.toString()}`;
   params.set('page', historyPage);
   params.set('limit', 25);
   const data = await api('GET', `/api/sales?${params.toString()}`);
@@ -1125,7 +1146,7 @@ async function loadReport() {
   const from = $('report-from').value;
   const to = $('report-to').value;
   const q = new URLSearchParams({ from, to }).toString();
-  $('report-export').href = `/api/reports/export.csv?${q}`;
+  $('report-export').href = `api/reports/export.csv?${q}`;
   const data = await api('GET', `/api/reports/summary?${q}`);
   const t = data.totals;
 
@@ -1289,6 +1310,9 @@ function updatePrinterBadge(printers) {
   el.hidden = bad === 0;
   el.textContent = String(bad);
   el.title = `${plural(bad, 'printer')} need attention`;
+  const menu = $('menu-count');
+  menu.hidden = bad === 0;
+  menu.textContent = String(bad);
 }
 
 async function loadPrinters() {
@@ -2911,6 +2935,126 @@ function fillSettingsForm() {
   showLogoPreview(s.logo_data_url);
   $('settings-error').hidden = true;
   $('settings-success').hidden = true;
+  loadRemote(true).catch((err) => toast(err.message, true));
+}
+
+// ---------------------------------------------------------------
+// Remote access and the phone app
+// ---------------------------------------------------------------
+let remoteInfo = null;
+let remoteTimer = null;
+
+function b64url(str) {
+  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function loadRemote(fillForm) {
+  remoteInfo = await api('GET', '/api/remote');
+  if (fillForm) {
+    $('r-url').value = remoteInfo.relay_url;
+    $('r-key').value = '';
+    $('r-key').placeholder = remoteInfo.has_relay_key ? 'Saved (type to replace)' : 'The RELAY_KEY set on the relay';
+    $('r-enabled').checked = remoteInfo.enabled;
+    $('remote-error').hidden = true;
+    checkRelayUrl();
+  }
+  renderRemote();
+  clearTimeout(remoteTimer);
+  remoteTimer = setTimeout(() => {
+    if (currentView === 'settings' && !document.hidden) loadRemote(false).catch(() => {});
+  }, remoteInfo.enabled && !remoteInfo.status.connected ? 2500 : 8000);
+}
+
+function remoteState(r) {
+  if (!r.enabled) return { cls: 'off', text: 'Off' };
+  if (r.status.connected) return { cls: 'on', text: 'Connected' };
+  if (r.status.last_error) return { cls: 'bad', text: "Can't connect" };
+  return { cls: 'wait', text: 'Connecting…' };
+}
+
+function renderRemote() {
+  const r = remoteInfo;
+  const st = remoteState(r);
+  const pill = $('remote-state');
+  pill.className = `remote-state ${st.cls}`;
+  pill.innerHTML = `<i aria-hidden="true"></i>${escapeHtml(st.text)}`;
+  pill.title = r.status.last_error || (r.status.since ? `Connected since ${new Date(r.status.since).toLocaleString()}` : '');
+  const err = $('remote-error');
+  if (r.enabled && r.status.last_error) { err.textContent = r.status.last_error; err.hidden = false; } else if (r.status.connected) err.hidden = true;
+
+  // Pair through the relay when it's working; otherwise on the shop Wi-Fi.
+  const remote = r.enabled && r.shop_url;
+  const base = remote ? r.shop_url : (r.via_remote ? '' : (r.lan_urls[0] || ''));
+  $('remote-pair').hidden = !base;
+  if (!base) return;
+  const name = currentSettings.business_name || 'Shop';
+  const link = `${base}connect.html#k=${r.pulse_key}&n=${encodeURIComponent(name)}`;
+  const code = b64url(JSON.stringify({ u: base, k: r.pulse_key, n: name }));
+  if ($('remote-link').value !== base || $('remote-code').value !== code) {
+    $('remote-link').value = base;
+    $('remote-code').value = code;
+    drawQr($('remote-qr'), link);
+  }
+  $('pair-title').textContent = remote ? 'Pair your phone' : 'Pair your phone on the shop Wi-Fi';
+  $('pair-scope').textContent = remote
+    ? 'Works from anywhere. If this PC is off, the app still shows the last update it sent.'
+    : 'This code works while the phone is on the same Wi-Fi as this PC. Set up a relay above to reach the shop from anywhere.';
+  $('apk-hint').innerHTML = r.apk_available ? ' (<a href="download/ReceiptAdmin.apk">download the app</a>)' : '';
+}
+
+function drawQr(el, text) {
+  if (typeof qrcode !== 'function') { el.textContent = 'QR code unavailable'; return; }
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  const n = qr.getModuleCount();
+  let d = '';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`;
+  el.innerHTML = `<svg viewBox="-3 -3 ${n + 6} ${n + 6}" shape-rendering="crispEdges" aria-hidden="true"><rect x="-3" y="-3" width="${n + 6}" height="${n + 6}" fill="#fff"/><path d="${d}" fill="#1B1E24"/></svg>`;
+  el.classList.remove('qr-in');
+  void el.offsetWidth;
+  el.classList.add('qr-in');
+}
+
+function checkRelayUrl() {
+  const v = $('r-url').value.trim();
+  $('remote-http-warn').hidden = !/^http:\/\//i.test(v) || /^http:\/\/(localhost|127\.|192\.168\.|10\.)/i.test(v);
+}
+
+function setupRemote() {
+  $('r-url').addEventListener('input', checkRelayUrl);
+  $('remote-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button[type=submit]');
+    $('remote-error').hidden = true;
+    btn.disabled = true;
+    try {
+      const body = { enabled: $('r-enabled').checked, relay_url: $('r-url').value.trim() };
+      if ($('r-key').value) body.relay_key = $('r-key').value;
+      remoteInfo = await api('PUT', '/api/remote', body);
+      toast(body.enabled ? 'Remote access saved. Connecting to the relay…' : 'Remote access turned off.');
+      await loadRemote(true);
+    } catch (err) {
+      $('remote-error').textContent = err.message;
+      $('remote-error').hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $('remote-reset').addEventListener('click', async () => {
+    const ok = await confirmModal({ title: 'Reset pairing?', message: 'Every paired phone will need to scan the new code, and the shop gets a new web address.', confirmLabel: 'Reset pairing' });
+    if (!ok) return;
+    try {
+      remoteInfo = await api('POST', '/api/remote/reset');
+      toast('Pairing reset. Scan the new code on each phone.');
+      await loadRemote(true);
+    } catch (err) { toast(err.message, true); }
+  });
+  document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+    const input = $(b.dataset.copy);
+    try { await navigator.clipboard.writeText(input.value); } catch (_) { input.select(); document.execCommand('copy'); }
+    toast('Copied.');
+  }));
 }
 
 function showLogoPreview(src) {

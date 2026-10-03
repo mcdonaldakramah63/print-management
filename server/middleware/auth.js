@@ -11,6 +11,8 @@ function loadSessionUser(req) {
     req.session.user = null;
     return null;
   }
+  // Through the relay (from outside the shop) only admins get in.
+  if (req.remote && user.role !== 'admin') return null;
   req.session.user = {
     id: user.id,
     username: user.username,

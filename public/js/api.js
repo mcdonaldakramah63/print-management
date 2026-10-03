@@ -1,5 +1,9 @@
+// Running inside the Receipt Admin phone app (its WebView adds this).
+const IN_APP = /\bReceiptAdmin\//.test(navigator.userAgent);
+
 async function api(method, url, body) {
-  const res = await fetch(url, {
+  // Relative URLs, so the app also works under a relay's /s/<shop>/ path.
+  const res = await fetch(String(url).replace(/^\/+/, ''), {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,

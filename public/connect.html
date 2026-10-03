@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<title>Connect the phone app · Receipt System</title>
+<link rel="preload" href="fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .connect-card { max-width: 440px; }
+  .connect-card h1 { font-size: 24px; }
+  .connect-steps { margin: 0; padding-left: 20px; color: var(--ink-2); display: flex; flex-direction: column; gap: 4px; }
+  .connect-actions { display: flex; flex-direction: column; gap: 10px; }
+  .shop-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; max-width: 100%; }
+  .shop-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="ink-field drift" aria-hidden="true"><i class="ink-c"></i><i class="ink-m"></i><i class="ink-y"></i></div>
+<main class="login-page">
+  <div class="card login-card connect-card stack">
+    <div class="row" style="gap:12px; flex-wrap:nowrap;">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M18 2v32M2 18h32" stroke="currentColor" stroke-width="2.4"/><circle cx="18" cy="18" r="4.2" fill="#D6167A"/></svg></span>
+      <div><h1>Receipt Admin</h1><p class="muted" style="margin:2px 0 0;">Connect your phone to the shop</p></div>
+    </div>
+    <div class="cmyk-bar printing" aria-hidden="true"><span class="c"></span><span class="m"></span><span class="y"></span><span class="k"></span></div>
+
+    <div id="ok" class="stack" hidden>
+      <div><span class="shop-chip"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l1-5h16l1 5M4 9v11h16V9M3 9h18M9 20v-6h6v6"/></svg><span id="shop-name"></span></span></div>
+      <div class="connect-actions">
+        <a class="btn btn-primary btn-lg btn-block" id="open-app" href="#">Open in Receipt Admin</a>
+        <a class="btn btn-ghost btn-block" id="get-app" href="download/ReceiptAdmin.apk" hidden>Download the Android app</a>
+        <a class="btn btn-ghost btn-block" href="login.html">Use the browser instead</a>
+      </div>
+      <ol class="connect-steps small">
+        <li>Install Receipt Admin, then come back to this page.</li>
+        <li>Tap <b>Open in Receipt Admin</b> and sign in with your admin account.</li>
+      </ol>
+      <details class="code-details">
+        <summary>Paste a connection code instead</summary>
+        <div class="copy-row"><input id="code" class="mono" readonly aria-label="Connection code"><button class="btn btn-ghost btn-sm" type="button" id="copy">Copy</button></div>
+        <p class="muted small" style="margin:6px 0 0;">In the app: Add a shop, then paste. Keep it private.</p>
+      </details>
+    </div>
+    <div id="bad" class="callout" hidden>This link is incomplete. On the shop PC open Settings &gt; Remote access and scan the code again.</div>
+  </div>
+</main>
+<script>
+(function () {
+  var params = new URLSearchParams(location.hash.slice(1));
+  var key = params.get('k') || '';
+  var name = params.get('n') || 'Shop';
+  var base = location.href.split('#')[0].split('?')[0].replace(/connect\.html$/, '');
+  if (!/^[A-Za-z0-9_-]{43}$/.test(key)) { document.getElementById('bad').hidden = false; return; }
+  // Keep the key out of the address bar and history once read.
+  history.replaceState(null, '', location.pathname);
+  document.getElementById('ok').hidden = false;
+  document.getElementById('shop-name').textContent = name;
+  var code = btoa(unescape(encodeURIComponent(JSON.stringify({ u: base, k: key, n: name })))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  document.getElementById('code').value = code;
+  var q = 'u=' + encodeURIComponent(base) + '&k=' + encodeURIComponent(key) + '&n=' + encodeURIComponent(name);
+  var android = /Android/i.test(navigator.userAgent);
+  document.getElementById('open-app').href = android
+    ? 'intent://connect?' + q + '#Intent;scheme=receiptadmin;package=com.receiptsystem.admin;end'
+    : 'receiptadmin://connect?' + q;
+  fetch('download/ReceiptAdmin.apk', { method: 'HEAD' }).then(function (r) {
+    if (r.ok && android) document.getElementById('get-app').hidden = false;
+  }).catch(function () {});
+  document.getElementById('copy').addEventListener('click', function () {
+    var input = document.getElementById('code');
+    (navigator.clipboard ? navigator.clipboard.writeText(input.value) : Promise.reject()).catch(function () { input.select(); document.execCommand('copy'); });
+    this.textContent = 'Copied';
+  });
+})();
+</script>
+</body>
+</html>

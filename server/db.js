@@ -369,6 +369,31 @@ CREATE TABLE IF NOT EXISTS printer_info (
 );
 `);
 
+// ---------- Remote access ----------
+// Logins survive restarts (the app's 30-day "keep me signed in" needs it),
+// and the shop's link to the relay plus the key that encrypts the status
+// snapshot paired phones read. Kept out of settings, which every signed-in
+// user can read.
+db.exec(`
+CREATE TABLE IF NOT EXISTS sessions (
+  sid      TEXT PRIMARY KEY,
+  sess     TEXT NOT NULL,
+  expires  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
+
+CREATE TABLE IF NOT EXISTS remote_link (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled      INTEGER NOT NULL DEFAULT 0,
+  relay_url    TEXT NOT NULL DEFAULT '',
+  relay_key    TEXT NOT NULL DEFAULT '',
+  shop_id      TEXT NOT NULL,
+  shop_secret  TEXT NOT NULL,
+  pulse_key    TEXT NOT NULL,
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);
+
 // ---------- Seed default settings row ----------
 const settingsExists = db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
 if (!settingsExists) {

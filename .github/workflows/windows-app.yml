@@ -7,6 +7,7 @@ on:
       - 'public/**'
       - 'agent/**'
       - 'scripts/**'
+      - 'relay/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/windows-app.yml'

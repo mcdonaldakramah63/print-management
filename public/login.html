@@ -24,9 +24,10 @@
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
+      <label class="remember-row"><input type="checkbox" id="remember"> Keep me signed in on this device</label>
       <div class="error-text" id="login-error" role="alert" hidden></div>
       <button class="btn btn-primary btn-lg btn-block" type="submit">Sign in</button>
-      <p class="muted small" style="margin:0; text-align:center;">First run? The default admin is <strong>admin</strong> / <strong>admin123</strong>. Change it right after signing in.</p>
+      <p class="muted small" id="default-hint" style="margin:0; text-align:center;">First run? The default admin is <strong>admin</strong> / <strong>admin123</strong>. Change it right after signing in.</p>
     </form>
   </main>
 
@@ -41,7 +42,8 @@
       try {
         await api('POST', '/api/auth/login', {
           username: document.getElementById('username').value.trim(),
-          password: document.getElementById('password').value
+          password: document.getElementById('password').value,
+          remember: document.getElementById('remember').checked
         });
         window.location.href = 'app.html';
       } catch (err) {
@@ -52,7 +54,10 @@
     });
 
     // If already logged in, skip straight to the app.
+    // The phone app stays signed in by default.
+    document.getElementById('remember').checked = IN_APP;
     api('GET', '/api/auth/me').then((data) => {
+      if (data.remote) document.getElementById('default-hint').hidden = true;
       if (data.user) window.location.href = 'app.html';
     }).catch(() => { /* stay on the login form */ });
   </script>

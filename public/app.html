@@ -10,7 +10,13 @@
 <body>
 <div class="ink-field" aria-hidden="true"><i class="ink-c"></i><i class="ink-m"></i><i class="ink-y"></i></div>
 <div class="app-shell">
-  <nav class="sidebar" aria-label="Main">
+  <header class="mobile-bar">
+    <button class="menu-btn" id="menu-btn" type="button" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg><span class="count" id="menu-count" hidden></span></button>
+    <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M18 2v32M2 18h32" stroke="currentColor" stroke-width="2.4"/><circle cx="18" cy="18" r="4.2" fill="#D6167A"/></svg></span>
+    <span class="mobile-title" id="mobile-title">Receipt System</span>
+  </header>
+  <div class="nav-scrim" id="nav-scrim" aria-hidden="true"></div>
+  <nav class="sidebar" id="sidebar" aria-label="Main">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M18 2v32M2 18h32" stroke="currentColor" stroke-width="2.4"/><circle cx="18" cy="18" r="4.2" fill="#D6167A"/></svg></span>
       <span><span class="brand-name">Receipt System</span><span class="brand-sub" id="brand-business">&nbsp;</span></span>
@@ -377,6 +383,37 @@
         <div class="success-text" id="settings-success" hidden>Settings saved.</div>
         <div><button class="btn btn-primary" type="submit">Save settings</button></div>
       </form>
+
+      <section class="card stack" id="remote-card" style="max-width:820px;" aria-labelledby="h-remote">
+        <div class="spread"><h2 id="h-remote">Remote access and phone app</h2><span class="remote-state" id="remote-state"></span></div>
+        <p class="muted small" style="margin:0;">Check sales, printers and alerts from anywhere, and use every admin page from the Receipt Admin Android app. This PC connects out to a relay you run (free on Render), so the router needs no changes. Only admins can sign in from outside the shop.</p>
+        <form class="form-grid" id="remote-form" autocomplete="off">
+          <div class="field full"><label for="r-url">Relay address</label><input id="r-url" type="url" inputmode="url" placeholder="https://receipt-relay.onrender.com" spellcheck="false"></div>
+          <div class="field"><label for="r-key">Relay key</label><input id="r-key" type="password" placeholder="The RELAY_KEY set on the relay" spellcheck="false"></div>
+          <div class="field"><span class="label-like">Remote access</span><label class="switch-row"><input type="checkbox" id="r-enabled"><span>Allow admins to connect from anywhere</span></label></div>
+          <div class="callout warn full" id="remote-http-warn" hidden>This address doesn't start with https://, so passwords would cross the internet unencrypted. Use the https:// address your host gives you.</div>
+          <div class="error-text full" id="remote-error" role="alert" hidden></div>
+          <div class="full"><button class="btn btn-primary" type="submit">Save remote access</button></div>
+        </form>
+        <div class="pair" id="remote-pair" hidden>
+          <div class="qr-frame"><div class="qr" id="remote-qr" role="img" aria-label="Pairing code for the Receipt Admin app"></div></div>
+          <div class="stack pair-body">
+            <h3 id="pair-title">Pair your phone</h3>
+            <ol class="pair-steps">
+              <li>Install Receipt Admin on the phone<span id="apk-hint"></span>.</li>
+              <li>Scan this code with the phone's camera, then tap <b>Open in Receipt Admin</b>.</li>
+              <li>Sign in with your admin account.</li>
+            </ol>
+            <p class="muted small" id="pair-scope" style="margin:0;"></p>
+            <div class="copy-row"><input id="remote-link" class="mono" readonly aria-label="Shop link"><button class="btn btn-ghost btn-sm" type="button" data-copy="remote-link">Copy link</button></div>
+            <details class="code-details"><summary>Connection code for the app</summary>
+              <div class="copy-row"><input id="remote-code" class="mono" readonly aria-label="Connection code"><button class="btn btn-ghost btn-sm" type="button" data-copy="remote-code">Copy code</button></div>
+              <p class="muted small" style="margin:6px 0 0;">Paste it in the app under Add a shop if scanning isn't possible. Keep it private: it unlocks the shop's status snapshot.</p>
+            </details>
+            <div><button class="btn btn-ghost btn-sm" type="button" id="remote-reset">Reset pairing</button></div>
+          </div>
+        </div>
+      </section>
     </section>
 
     <!-- ============ ACCOUNT ============ -->
@@ -399,6 +436,7 @@
 <div id="modal-root"></div>
 
 <script src="js/api.js"></script>
+<script src="js/vendor/qrcode.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

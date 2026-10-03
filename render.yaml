@@ -1,0 +1,17 @@
+# One-click relay on Render (https://render.com): New > Blueprint > this repo.
+# Render asks for RELAY_KEY: make up a long random value and enter the same
+# key on the shop PC in Settings > Remote access.
+services:
+  - type: web
+    name: receipt-relay
+    runtime: node
+    rootDir: relay
+    buildCommand: "true"
+    startCommand: node relay.js
+    healthCheckPath: /healthz
+    plan: free
+    envVars:
+      - key: RELAY_KEY
+        sync: false
+      - key: TRUST_PROXY
+        value: "1"

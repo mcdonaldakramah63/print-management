@@ -1,0 +1,13 @@
+{
+  "name": "receipt-system-relay",
+  "version": "1.0.0",
+  "description": "Connects a shop's Receipt System to the admin's phone and browser from anywhere, without port forwarding",
+  "main": "relay.js",
+  "scripts": {
+    "start": "node relay.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
