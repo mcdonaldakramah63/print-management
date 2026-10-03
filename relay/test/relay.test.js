@@ -126,6 +126,25 @@ function decrypt(blob, keyB64url) {
   const css = await fetch(`${RELAY}${shopPath}/css/style.css`);
   assert.equal(css.status, 200);
   assert.ok((await css.arrayBuffer()).byteLength > 10000);
+  // Compression and caching survive the relay: gzip bytes pass through,
+  // pages link versioned CSS/JS cached for a year, ETags revalidate.
+  const rawCss = await new Promise((resolve, reject) => {
+    require('http').get(`${RELAY}${shopPath}/css/style.css`, { headers: { 'accept-encoding': 'gzip' } }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ headers: res.headers, body: Buffer.concat(chunks) }));
+    }).on('error', reject);
+  });
+  assert.equal(rawCss.headers['content-encoding'], 'gzip');
+  assert.ok(rawCss.body.length < 30000, `gzipped css is ${rawCss.body.length} bytes`);
+  assert.ok(require('zlib').gunzipSync(rawCss.body).length > 50000);
+  const appHtml = (await call(RELAY, 'GET', `${shopPath}/app.html`, null, phone)).text;
+  const versioned = /src="js\/app\.js\?v=([0-9a-f]{12})"/.exec(appHtml);
+  assert.ok(versioned, 'app.js linked with a content hash');
+  const appJs = await fetch(`${RELAY}${shopPath}/js/app.js?v=${versioned[1]}`);
+  assert.match(appJs.headers.get('cache-control'), /immutable/);
+  const again = await fetch(`${RELAY}${shopPath}/js/api.js`, { headers: { 'if-none-match': (await fetch(`${RELAY}${shopPath}/js/api.js`)).headers.get('etag') } });
+  assert.equal(again.status, 304, 'unchanged files revalidate with a 304');
   const font = await fetch(`${RELAY}${shopPath}/fonts/archivo-latin.woff2`);
   assert.equal(Buffer.from(await font.arrayBuffer()).subarray(0, 4).toString(), 'wOF2', 'binary bodies survive');
 

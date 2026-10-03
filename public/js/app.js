@@ -3014,8 +3014,27 @@ function renderRemote() {
   $('apk-hint').innerHTML = r.apk_available ? ' (<a href="download/ReceiptAdmin.apk">download the app</a>)' : '';
 }
 
+// The QR library is only needed here: load it on first use.
+let qrLoading = null;
+function loadQrLibrary() {
+  if (typeof qrcode === 'function') return Promise.resolve();
+  if (!qrLoading) {
+    qrLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'js/vendor/qrcode.js';
+      s.onload = resolve;
+      s.onerror = () => { qrLoading = null; reject(new Error('QR code unavailable')); };
+      document.head.append(s);
+    });
+  }
+  return qrLoading;
+}
+
 function drawQr(el, text) {
-  if (typeof qrcode !== 'function') { el.textContent = 'QR code unavailable'; return; }
+  if (typeof qrcode !== 'function') {
+    loadQrLibrary().then(() => drawQr(el, text)).catch(() => { el.textContent = 'QR code unavailable'; });
+    return;
+  }
   const qr = qrcode(0, 'M');
   qr.addData(text);
   qr.make();

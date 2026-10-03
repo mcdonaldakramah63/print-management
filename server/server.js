@@ -36,6 +36,7 @@ const { router: reconciliationRoutes } = require('./routes/reconciliation');
 const { router: remoteRoutes, publicRouter: remotePublic } = require('./routes/remote');
 const remoteLink = require('./lib/remoteLink');
 const { SqliteStore } = require('./lib/sessionStore');
+const { createStatic, diskSource, seaSource, compressResponses } = require('./lib/staticFiles');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -50,6 +51,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(remoteLink.remoteContext);
+app.use(compressResponses);
 
 // No SESSION_SECRET configured: generate a random one once and keep it in
 // data/, so logins survive restarts without anyone having to edit .env.
@@ -102,8 +104,7 @@ app.locals.lanUrls = () => lanAddresses().map((ip) => `http://${ip}:${server.add
 // The phone app, if it has been put beside the server (ReceiptAdmin.apk).
 app.locals.apkPath = [path.join(PKG_ROOT, 'ReceiptAdmin.apk'), path.join(PKG_ROOT, 'dist', 'ReceiptAdmin.apk')].find((f) => fs.existsSync(f)) || path.join(PKG_ROOT, 'ReceiptAdmin.apk');
 
-if (isSea()) app.use(embeddedStatic());
-else app.use(express.static(path.join(PKG_ROOT, 'public')));
+app.use(createStatic(isSea() ? seaSource() : diskSource(path.join(PKG_ROOT, 'public'))));
 
 // Unknown API routes and unexpected errors answer in JSON, which is what the
 // frontend's api() helper expects to read an error message from.
@@ -114,26 +115,6 @@ app.use((err, req, res, next) => {
   if (status >= 500) console.error(err);
   res.status(status).json({ error: status >= 500 ? 'Internal server error' : err.message });
 });
-
-// Web pages embedded in the standalone .exe (see scripts/build-exe.js).
-function embeddedStatic() {
-  const sea = require('node:sea');
-  const files = new Set(JSON.parse(sea.getAsset('public-manifest.json', 'utf8')));
-  const types = {
-    '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-    '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.jpg': 'image/jpeg',
-    '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8'
-  };
-  return (req, res, next) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-    let rel;
-    try { rel = decodeURIComponent(req.path).replace(/^\/+/, ''); } catch { return next(); }
-    if (!files.has(rel)) return next();
-    res.setHeader('Content-Type', types[path.extname(rel)] || 'application/octet-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.end(Buffer.from(sea.getAsset(`public/${rel}`)));
-  };
-}
 
 function lanAddresses() {
   return Object.values(os.networkInterfaces()).flat()

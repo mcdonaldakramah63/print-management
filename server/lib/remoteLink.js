@@ -20,6 +20,7 @@
 // may sign in through the link.
 // ---------------------------------------------------------------
 const crypto = require('crypto');
+const http = require('http');
 const db = require('../db');
 const { buildPulse, encrypt, newKey, b64url } = require('./pulse');
 
@@ -27,7 +28,25 @@ const TOKEN = crypto.randomBytes(24).toString('hex');
 const POLL_TIMEOUT_MS = 40000;
 const LOCAL_TIMEOUT_MS = 28000;
 const PULSE_EVERY_MS = 2 * 60 * 1000;
-const HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'proxy-connection', 'te', 'trailer', 'host', 'content-length', 'content-encoding', 'x-remote-link', 'x-remote-client']);
+// Hop-by-hop headers stay on each leg. Content-Encoding passes through: a
+// gzipped answer reaches the phone still gzipped.
+const HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'proxy-connection', 'te', 'trailer', 'host', 'content-length', 'x-remote-link', 'x-remote-client']);
+const localAgent = new http.Agent({ keepAlive: true, maxSockets: 16 });
+
+/** One request to this server, bytes untouched (no decompression). */
+function localRequest(method, path, headers, body) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method, path, headers, agent: localAgent, timeout: LOCAL_TIMEOUT_MS }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, rawHeaders: res.rawHeaders, body: Buffer.concat(chunks) }));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('timed out')));
+    req.on('error', reject);
+    if (body) req.end(body); else req.end();
+  });
+}
 
 const sleep = (ms, signal) => new Promise((resolve) => {
   const t = setTimeout(resolve, ms);
@@ -98,18 +117,15 @@ async function handle(cfg, r) {
   headers['x-remote-link'] = TOKEN;
   headers['x-remote-client'] = String(r.client_ip || 'remote').slice(0, 64);
   try {
-    const res = await fetch(`http://127.0.0.1:${port}${r.path}`, {
-      method: r.method,
-      headers,
-      body: r.body && !['GET', 'HEAD'].includes(r.method) ? Buffer.from(r.body, 'base64') : undefined,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(LOCAL_TIMEOUT_MS)
-    });
-    const body = Buffer.from(await res.arrayBuffer());
+    const body = r.body && !['GET', 'HEAD'].includes(r.method) ? Buffer.from(r.body, 'base64') : null;
+    if (body) headers['content-length'] = String(body.length);
+    const res = await localRequest(r.method, r.path, headers, body);
     const out = [];
-    res.headers.forEach((v, k) => { if (!HOP.has(k) && k !== 'set-cookie') out.push([k, v]); });
-    for (const c of res.headers.getSetCookie ? res.headers.getSetCookie() : []) out.push(['set-cookie', c]);
-    await respond(cfg, { id: r.id, status: res.status, headers: out, body: body.toString('base64') });
+    for (let i = 0; i < res.rawHeaders.length; i += 2) {
+      const k = res.rawHeaders[i].toLowerCase();
+      if (!HOP.has(k)) out.push([k, res.rawHeaders[i + 1]]);
+    }
+    await respond(cfg, { id: r.id, status: res.status, headers: out, body: res.body.toString('base64') });
   } catch (err) {
     await fail(502, `The shop computer couldn't answer: ${err.message}`);
   }
