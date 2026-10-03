@@ -23,8 +23,9 @@
  *   shop -> relay  { type: "pulse", blob }           -> { type: "pulse-ok" }
  *   "ping" -> "pong" (answered by the runtime)
  *
- * Secrets: RELAY_KEY (required). A shop's first link registers its secret
- * (stored hashed); later links must match it.
+ * Secrets: RELAY_KEY (recommended: only shops that know it can link). A
+ * shop's first link registers its secret (stored hashed); later links must
+ * match it, so nobody can take over a shop's address even without the key.
  */
 import { DurableObject } from 'cloudflare:workers';
 
@@ -125,7 +126,7 @@ export default {
     const url = new URL(request.url);
     const p = url.pathname;
 
-    if (p === '/healthz') return json({ ok: true, link: 'ws' });
+    if (p === '/healthz') return json({ ok: true, link: 'ws', key_required: !!env.RELAY_KEY });
     if (p === '/' || p === '/index.html') {
       return html(page('Receipt System relay', `<h1>Receipt System relay</h1>
 <p>This server connects shops running the Receipt System to their owners' phones and browsers. Open your shop's own link (Settings &gt; Remote access on the shop PC) or use the Receipt Admin app.</p>`));
@@ -135,7 +136,6 @@ export default {
       if (request.headers.get('Upgrade') !== 'websocket') return json({ error: 'Expected a WebSocket' }, 426);
       const shop = url.searchParams.get('shop') || '';
       if (!SHOP_ID.test(shop)) return json({ error: 'Bad shop id' }, 400);
-      if (!env.RELAY_KEY) return json({ error: 'The relay has no RELAY_KEY set.' }, 503);
       return stub(env, shop).fetch(withShop(request, shop));
     }
 
@@ -259,7 +259,7 @@ export class ShopRelay extends DurableObject {
         ws.close(1008, 'refused');
       };
       if (msg.type !== 'hello') return refuse(400, 'Say hello first.');
-      if (!this.env.RELAY_KEY || !safeEqual(msg.key || '', this.env.RELAY_KEY)) {
+      if (this.env.RELAY_KEY && !safeEqual(msg.key || '', this.env.RELAY_KEY)) {
         return refuse(401, 'Wrong relay key. Copy RELAY_KEY into Settings > Remote access on the shop PC.');
       }
       if (msg.id !== att.shop || !/^[A-Za-z0-9_-]{32,128}$/.test(String(msg.secret || ''))) return refuse(401, 'Missing shop credentials');

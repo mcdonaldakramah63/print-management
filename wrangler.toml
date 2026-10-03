@@ -1,0 +1,16 @@
+# Cloudflare Worker for the remote-access relay, deployable from the root of
+# this repository (Cloudflare's "Import a repository" builds from here).
+# The code lives in relay-cloudflare/; see relay-cloudflare/README.md.
+name = "print-management"
+main = "relay-cloudflare/src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+keep_vars = true
+
+[[durable_objects.bindings]]
+name = "SHOPS"
+class_name = "ShopRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ShopRelay"]

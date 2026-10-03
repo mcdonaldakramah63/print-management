@@ -93,9 +93,13 @@ function decrypt(blob, keyB64url) {
   assert.equal(weak.status, 400, 'default password blocks remote access');
   assert.match(weak.json.error, /default password/);
   assert.equal((await call(SHOP, 'POST', '/api/auth/change-password', { currentPassword: 'admin123', newPassword: 'Str0ng-pass' }, local)).status, 200);
+  // A relay may run without a key (the Cloudflare one until RELAY_KEY is set).
+  const keyRequired = (await (await fetch(`${RELAY}/healthz`)).json()).key_required !== false;
+  if (keyRequired) {
   const wrong = await call(SHOP, 'PUT', '/api/remote', { enabled: true, relay_url: RELAY, relay_key: 'nope' }, local);
   assert.equal(wrong.status, 200);
   await waitFor(async () => (await call(SHOP, 'GET', '/api/remote', null, local)).json.status.refused, 'wrong key refused');
+  }
   const conf = await call(SHOP, 'PUT', '/api/remote', { enabled: true, relay_url: `${RELAY}/`, relay_key: KEY }, local);
   assert.equal(conf.json.relay_url, RELAY, 'trailing slash removed');
   const shopPath = `/s/${conf.json.shop_id}`;
@@ -195,7 +199,7 @@ function decrypt(blob, keyB64url) {
       ws.onerror = () => reject(new Error('websocket error'));
     });
     assert.equal((await hello({ id: conf.json.shop_id, secret: 'x'.repeat(43), key: KEY })).status, 403);
-    assert.equal((await hello({ id: 'abcdefgh12345678', secret: 'y'.repeat(43), key: 'wrong' })).status, 401);
+    if (keyRequired) assert.equal((await hello({ id: 'abcdefgh12345678', secret: 'y'.repeat(43), key: 'wrong' })).status, 401);
   } else {
     const hijack = await fetch(`${RELAY}/link/poll`, { method: 'POST', headers: { authorization: `Bearer ${conf.json.shop_id}.${'x'.repeat(43)}`, 'x-relay-key': KEY }, body: '{}' });
     assert.equal(hijack.status, 403);
