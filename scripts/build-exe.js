@@ -244,6 +244,13 @@ async function main() {
   fs.copyFileSync(path.join(ROOT, 'agent/config.example.json'), path.join(out, 'agent-config.example.json'));
   fs.copyFileSync(path.join(ROOT, '.env.example'), path.join(out, '.env.example'));
   fs.writeFileSync(path.join(out, 'README.txt'), README.replace(/\n/g, targetOs === 'win' ? '\r\n' : '\n'));
+  // The phone app, if CI fetched it: the shop PC then offers it to phones on
+  // its pairing page (download/ReceiptAdmin.apk).
+  const apk = process.env.RECEIPT_ADMIN_APK;
+  if (apk && fs.existsSync(apk)) {
+    fs.copyFileSync(apk, path.join(out, 'ReceiptAdmin.apk'));
+    log('Included ReceiptAdmin.apk');
+  }
 
   zipDir(out, path.join(DIST, `${name}.zip`));
   const size = (f) => `${(fs.statSync(f).size / 1048576).toFixed(1)} MB`;

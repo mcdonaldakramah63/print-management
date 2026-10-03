@@ -28,6 +28,14 @@ jobs:
       - name: Tests (agent + server)
         run: npm test
 
+      - name: Fetch the latest phone app to bundle (if published)
+        shell: pwsh
+        run: |
+          try {
+            Invoke-WebRequest 'https://github.com/${{ github.repository }}/releases/download/app-latest/ReceiptAdmin.apk' -OutFile "$env:RUNNER_TEMP/ReceiptAdmin.apk" -UseBasicParsing
+            "RECEIPT_ADMIN_APK=$env:RUNNER_TEMP/ReceiptAdmin.apk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } catch { Write-Host 'No published phone app yet; building without it.' }
+
       - name: Build ReceiptSystem.exe and PrintMonitorAgent.exe
         run: npm run build:exe
 
@@ -136,3 +144,31 @@ jobs:
           name: ReceiptSystem-win-x64
           path: dist/ReceiptSystem-win-x64.zip
           retention-days: 30
+
+  # Direct download links (no GitHub sign-in), updated by every build:
+  #   https://github.com/<owner>/<repo>/releases/download/app-latest/ReceiptSystem-win-x64.zip
+  publish:
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-app-latest
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReceiptSystem-win-x64
+          path: out
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-latest
+          name: Latest apps
+          make_latest: true
+          files: out/ReceiptSystem-win-x64.zip
+          body: |
+            Always the newest build.
+            - **Shop PC (Windows):** ReceiptSystem-win-x64.zip, unzip and run ReceiptSystem.exe
+            - **Admin phone (Android 8+):** ReceiptAdmin.apk
+

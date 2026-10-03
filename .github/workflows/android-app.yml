@@ -116,3 +116,32 @@ jobs:
 
       - if: always()
         run: tail -n 40 relay.log shop.log
+
+  # Direct download link (no GitHub sign-in), updated by every build that
+  # passes the emulator walkthrough:
+  #   https://github.com/<owner>/<repo>/releases/download/app-latest/ReceiptAdmin.apk
+  publish:
+    needs: [build, emulator]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-app-latest
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReceiptAdmin-android
+          path: out
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-latest
+          name: Latest apps
+          make_latest: true
+          files: out/ReceiptAdmin.apk
+          body: |
+            Always the newest build.
+            - **Shop PC (Windows):** ReceiptSystem-win-x64.zip, unzip and run ReceiptSystem.exe
+            - **Admin phone (Android 8+):** ReceiptAdmin.apk
+
