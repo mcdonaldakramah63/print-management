@@ -72,12 +72,25 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   /* Floating things only */
   --float-shadow: 0 1px 2px rgba(27, 30, 36, .06), 0 12px 32px -8px rgba(27, 30, 36, .22);
+  /* Glass: 62% white keeps every text colour >= 4.5:1 over the ink field */
+  --glass: rgba(255, 255, 255, .62);
+  --glass-strong: rgba(255, 255, 255, .78);
+  --glass-edge: rgba(255, 255, 255, .78);
+  --glass-line: rgba(27, 30, 36, .08);
+  --glass-blur: 18px;
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 1px 2px rgba(27, 30, 36, .04), 0 14px 34px -16px rgba(27, 30, 36, .22);
+  /* Glows in process inks */
+  --glow-cyan: 0 0 0 1px rgba(0, 160, 220, .28), 0 8px 26px -6px rgba(0, 160, 220, .55);
+  --glow-magenta: 0 0 0 1px rgba(214, 22, 122, .25), 0 6px 20px -4px rgba(214, 22, 122, .5);
+  --glow-ok: 0 0 0 1px rgba(31, 122, 74, .25), 0 6px 22px -6px rgba(31, 160, 90, .5);
+  --glow-danger: 0 0 0 1px rgba(180, 35, 24, .25), 0 8px 28px -6px rgba(220, 50, 40, .5);
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
   background: var(--bg);
+  position: relative;
   color: var(--ink);
   font-family: var(--font-body);
   font-size: 15px;
@@ -484,6 +497,167 @@ td .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wra
 .tabs { position: relative; }
 .tab-ink { position: absolute; left: 0; bottom: -1px; height: 2px; width: 1px; background: var(--cyan); transform-origin: left; transition: transform var(--t-base) var(--ease-out); pointer-events: none; }
 .tabs.has-ink [role="tab"][aria-selected="true"] { border-bottom-color: transparent; }
+
+/* ---------- Glass and glow ----------
+   Panels are frosted glass over a field of process ink diffusing in water
+   (cyan, magenta and yellow blooms with a faint halftone screen). Glows
+   use the same inks. Fallbacks: solid sheets without backdrop-filter or
+   when the system asks for reduced transparency; still ink when it asks
+   for reduced motion. */
+.ink-field { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--stock); }
+.ink-field i { position: absolute; display: block; border-radius: 50%; filter: blur(70px); opacity: .55; will-change: transform; }
+.ink-field i { transition: transform 1.6s var(--ease-std); }
+.ink-field .ink-c { width: 52vmax; height: 52vmax; left: -14vmax; top: -18vmax; background: #5BBDEB; }
+.ink-field .ink-m { width: 40vmax; height: 40vmax; right: -12vmax; top: 18vh; background: #EE8DBB; opacity: .42; }
+.ink-field .ink-y { width: 38vmax; height: 38vmax; left: 28vw; bottom: -20vmax; background: #F7D64A; opacity: .45; }
+/* Moving ink makes every glass panel re-blur each frame, so it only drifts
+   on the sign-in screen (one panel). In the app it settles into a new
+   arrangement when you change page: motion only on navigation. */
+.ink-field.drift .ink-c { animation: ink-drift-a 46s var(--ease-std) infinite alternate; }
+.ink-field.drift .ink-m { animation: ink-drift-b 54s var(--ease-std) infinite alternate; }
+.ink-field.drift .ink-y { animation: ink-drift-c 60s var(--ease-std) infinite alternate; }
+body[data-view="sale"] .ink-c { transform: translate(6vw, 4vh) scale(.9); }
+body[data-view="sale"] .ink-m { transform: translate(-4vw, 22vh) scale(1.1); }
+body[data-view="sale"] .ink-y { transform: translate(-14vw, -2vh); }
+body[data-view="printers"] .ink-c, body[data-view="printer"] .ink-c { transform: translate(2vw, 30vh) scale(.85); }
+body[data-view="printers"] .ink-m, body[data-view="printer"] .ink-m { transform: translate(-30vw, -10vh) scale(.9); }
+body[data-view="printers"] .ink-y, body[data-view="printer"] .ink-y { transform: translate(18vw, -8vh) scale(1.1); }
+body[data-view="reports"] .ink-c, body[data-view="history"] .ink-c { transform: translate(30vw, -4vh) scale(.8); }
+body[data-view="reports"] .ink-m, body[data-view="history"] .ink-m { transform: translate(2vw, 34vh); }
+body[data-view="reports"] .ink-y, body[data-view="history"] .ink-y { transform: translate(-24vw, -10vh) scale(.9); }
+body[data-view="print-monitor"] .ink-c, body[data-view="reconcile"] .ink-c { transform: translate(-4vw, 40vh) scale(.9); }
+body[data-view="print-monitor"] .ink-m, body[data-view="reconcile"] .ink-m { transform: translate(-8vw, -16vh) scale(1.15); }
+body[data-view="print-monitor"] .ink-y, body[data-view="reconcile"] .ink-y { transform: translate(10vw, 4vh) scale(.85); }
+.ink-field::after { content: ''; position: absolute; inset: 0; opacity: .35; background-image: radial-gradient(rgba(27, 30, 36, .08) 1px, transparent 1.2px); background-size: 6px 6px; }
+@keyframes ink-drift-a { to { transform: translate(9vw, 7vh) scale(1.12); } }
+@keyframes ink-drift-b { to { transform: translate(-8vw, 10vh) scale(.9); } }
+@keyframes ink-drift-c { to { transform: translate(-10vw, -6vh) scale(1.1); } }
+.ink-field.paused i { animation-play-state: paused; }
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .card, .sidebar, .modal, .lookup-list, .issue, .feature-tile, .tile, .guide-art, .waiting-row-glass {
+    background-color: var(--glass);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(170%);
+    backdrop-filter: blur(var(--glass-blur)) saturate(170%);
+  }
+  .card { border-color: var(--glass-edge); box-shadow: var(--glass-shadow); }
+  .sidebar { background-color: rgba(255, 255, 255, .55); border-right-color: var(--glass-edge); box-shadow: inset -1px 0 0 var(--glass-line); }
+  .modal { background-color: var(--glass-strong); border: 1px solid var(--glass-edge); }
+  .tile { background-color: rgba(255, 255, 255, .55); border-color: var(--glass-edge); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 6px 18px -12px rgba(27, 30, 36, .25); }
+  .issue, .feature-tile { background-color: rgba(255, 255, 255, .5); border-color: var(--glass-edge); }
+  .issue.sev-critical { background-color: rgba(253, 236, 234, .78); }
+  .issue.sev-warning { background-color: rgba(255, 243, 220, .78); }
+  .issue.sev-fixed { background-color: rgba(228, 243, 234, .8); }
+  /* Glass inside glass: no second blur (cheaper, and nested blur looks muddy). */
+  .card .card, .card .tile, .card .issue, .card .feature-tile, .modal .guide-art { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .card-dark { background-color: rgba(27, 30, 36, .84); border-color: rgba(255, 255, 255, .12); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 18px 40px -18px rgba(27, 30, 36, .6); }
+  .toast { background-color: rgba(27, 30, 36, .86); -webkit-backdrop-filter: blur(14px) saturate(160%); backdrop-filter: blur(14px) saturate(160%); }
+  .toast.error { background-color: rgba(180, 35, 24, .9); }
+  .input, .field input:not([type=checkbox]):not([type=file]), .field select, .field textarea { background-color: rgba(255, 255, 255, .82); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .card, .sidebar, .modal, .tile, .issue, .feature-tile, .lookup-list, .guide-art { background-color: var(--sheet) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  .ink-field i { opacity: .25; }
+}
+
+/* Spotlight: a soft cyan light follows the pointer across glass panels. */
+@media (hover: hover) and (pointer: fine) {
+  .card, .tile { background-image: radial-gradient(420px circle at var(--mx, -999px) var(--my, -999px), rgba(0, 160, 220, .10), transparent 45%); }
+  .tile { background-image: radial-gradient(220px circle at var(--mx, -999px) var(--my, -999px), rgba(0, 160, 220, .16), transparent 55%); }
+}
+
+/* Glows */
+.btn { position: relative; overflow: hidden; isolation: isolate; }
+.btn-primary { box-shadow: 0 6px 18px -8px rgba(0, 104, 163, .7); transition: background-color var(--t-instant) var(--ease-std), box-shadow var(--t-base) var(--ease-out), transform var(--t-instant) var(--ease-std); }
+.btn-primary:hover:not(:disabled) { box-shadow: var(--glow-cyan); }
+.btn-primary::after { content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 45%; z-index: -1; background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .35), transparent); transform: skewX(-18deg) translateX(0); transition: transform 0s; pointer-events: none; }
+.btn-primary:hover:not(:disabled)::after { transform: skewX(-18deg) translateX(380%); transition: transform 700ms var(--ease-out); }
+.btn-done { box-shadow: var(--glow-ok) !important; }
+.btn-outline:hover:not(:disabled) { box-shadow: 0 0 0 3px rgba(0, 160, 220, .12); }
+:focus-visible { box-shadow: 0 0 0 4px rgba(0, 160, 220, .25); }
+.nav-link.active { box-shadow: inset 0 0 0 1px rgba(0, 104, 163, .14), 0 6px 18px -10px rgba(0, 160, 220, .7); }
+.nav-link .count { box-shadow: var(--glow-magenta); }
+.nav-link svg { transition: transform var(--t-quick) var(--ease-spring); }
+.nav-link:hover svg { transform: translateX(2px) scale(1.08); }
+.cmyk-bar { filter: drop-shadow(0 2px 6px rgba(0, 160, 220, .35)); }
+.brand:hover + .cmyk-bar span { animation: print-again 260ms var(--ease-out) both; }
+@keyframes print-again { from { transform: scaleX(0); } }
+.brand:hover + .cmyk-bar .m { animation-delay: 70ms; }
+.brand:hover + .cmyk-bar .y { animation-delay: 140ms; }
+.brand:hover + .cmyk-bar .k { animation-delay: 210ms; }
+.tile { transition: border-color var(--t-instant) var(--ease-std), transform var(--t-quick) var(--ease-out), box-shadow var(--t-base) var(--ease-out); }
+.tile:hover { transform: translateY(-2px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), var(--glow-cyan); }
+.tile:active { transform: translateY(0) scale(.97); }
+.health-pill.ok { box-shadow: var(--glow-ok); }
+.health-pill.info { animation: breathe 2.4s var(--ease-std) infinite; }
+.health-pill.danger { animation: glow-alarm 2s var(--ease-std) infinite; }
+@keyframes breathe { 0%, 100% { box-shadow: 0 0 0 0 rgba(0, 160, 220, 0); } 50% { box-shadow: var(--glow-cyan); } }
+@keyframes glow-alarm { 0%, 100% { box-shadow: 0 0 0 0 rgba(220, 50, 40, 0); } 50% { box-shadow: var(--glow-danger); } }
+.printer-card.health-error { box-shadow: var(--glass-shadow), 0 16px 42px -20px rgba(220, 50, 40, .55); }
+.printer-card.health-busy { box-shadow: var(--glass-shadow), 0 16px 42px -20px rgba(0, 160, 220, .55); }
+.printer-card.health-ready { box-shadow: var(--glass-shadow), 0 16px 42px -22px rgba(31, 160, 90, .45); }
+.lcd { text-shadow: 0 0 6px rgba(160, 255, 190, .55); box-shadow: inset 0 0 0 2px #2A3A30, inset 0 0 22px rgba(120, 255, 170, .12), 0 0 18px -6px rgba(120, 255, 170, .35); }
+.totals .t-grand > span:last-child.flash-glow { animation: total-glow 700ms var(--ease-out); }
+@keyframes total-glow { 0% { text-shadow: 0 0 0 rgba(0, 160, 220, 0); } 30% { text-shadow: 0 0 18px rgba(0, 160, 220, .55); } 100% { text-shadow: 0 0 0 rgba(0, 160, 220, 0); } }
+.change-box { transition: background-color var(--t-base) var(--ease-std), box-shadow var(--t-base) var(--ease-std); }
+.change-box.short { box-shadow: var(--glow-danger); }
+.field input:focus, .field select:focus, .field textarea:focus, .input:focus { box-shadow: 0 0 0 3px rgba(0, 160, 220, .18), 0 6px 18px -8px rgba(0, 160, 220, .5); }
+
+/* More motion */
+.ripple { position: absolute; border-radius: 50%; background: currentColor; opacity: .25; transform: scale(0); pointer-events: none; z-index: -1; animation: ripple-out 520ms var(--ease-out) forwards; }
+@keyframes ripple-out { to { transform: scale(1); opacity: 0; } }
+.splash-dot { position: fixed; width: 9px; height: 9px; border-radius: 50%; pointer-events: none; z-index: 70; }
+.bar-chart .bar { animation: bar-grow 640ms var(--ease-out) both; }
+@keyframes bar-grow { from { transform: scaleY(0); } }
+.toner-bar > div, .meter > div { transform-origin: left; animation: fill-in 800ms var(--ease-out) both; }
+@keyframes fill-in { from { transform: scaleX(0); } }
+table:not(.queue-table):not(.heatmap) tbody tr { animation: row-in 320ms var(--ease-out) both; }
+@keyframes row-in { from { opacity: 0; transform: translateY(6px); } }
+.heatmap td { animation: fade-in 500ms var(--ease-out) both; }
+.kpi-value { display: inline-block; }
+.kpi-value.counting { color: var(--cyan-ink); }
+.card .kpi { transition: transform var(--t-quick) var(--ease-out); }
+.feature-tile .feature-icon { transition: transform var(--t-quick) var(--ease-spring); }
+.feature-tile:hover .feature-icon { transform: scale(1.12) rotate(-6deg); }
+.empty-state svg { animation: float-y 3.2s var(--ease-std) infinite alternate; }
+@keyframes float-y { to { transform: translateY(-6px); } }
+.bar-chart .bar-col:nth-child(1) .bar { animation-delay: 28ms; }
+.bar-chart .bar-col:nth-child(2) .bar { animation-delay: 56ms; }
+.bar-chart .bar-col:nth-child(3) .bar { animation-delay: 84ms; }
+.bar-chart .bar-col:nth-child(4) .bar { animation-delay: 112ms; }
+.bar-chart .bar-col:nth-child(5) .bar { animation-delay: 140ms; }
+.bar-chart .bar-col:nth-child(6) .bar { animation-delay: 168ms; }
+.bar-chart .bar-col:nth-child(7) .bar { animation-delay: 196ms; }
+.bar-chart .bar-col:nth-child(8) .bar { animation-delay: 224ms; }
+.bar-chart .bar-col:nth-child(9) .bar { animation-delay: 252ms; }
+.bar-chart .bar-col:nth-child(10) .bar { animation-delay: 280ms; }
+.bar-chart .bar-col:nth-child(11) .bar { animation-delay: 308ms; }
+.bar-chart .bar-col:nth-child(12) .bar { animation-delay: 336ms; }
+.bar-chart .bar-col:nth-child(13) .bar { animation-delay: 364ms; }
+.bar-chart .bar-col:nth-child(14) .bar { animation-delay: 392ms; }
+.bar-chart .bar-col:nth-child(15) .bar { animation-delay: 420ms; }
+.bar-chart .bar-col:nth-child(16) .bar { animation-delay: 448ms; }
+.bar-chart .bar-col:nth-child(17) .bar { animation-delay: 476ms; }
+.bar-chart .bar-col:nth-child(18) .bar { animation-delay: 504ms; }
+.bar-chart .bar-col:nth-child(19) .bar { animation-delay: 532ms; }
+.bar-chart .bar-col:nth-child(20) .bar { animation-delay: 560ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(1) { animation-delay: 35ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(2) { animation-delay: 70ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(3) { animation-delay: 105ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(4) { animation-delay: 140ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(5) { animation-delay: 175ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(6) { animation-delay: 210ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(7) { animation-delay: 245ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(8) { animation-delay: 280ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(9) { animation-delay: 315ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(10) { animation-delay: 350ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(11) { animation-delay: 385ms; }
+table:not(.queue-table):not(.heatmap) tbody tr:nth-child(12) { animation-delay: 420ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ink-field i { animation: none !important; transition: none !important; }
+  .btn-primary::after { display: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }

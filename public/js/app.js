@@ -102,6 +102,114 @@ $('logout-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// ---------------------------------------------------------------
+// Ambient effects: spotlight on glass, ripples, counting numbers,
+// the ink splash on a completed sale. All skip under reduced motion.
+// ---------------------------------------------------------------
+(function setupEffects() {
+  // A soft light follows the pointer over glass panels (fine pointers only).
+  if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    let target = null;
+    let frame = 0;
+    let pos = null;
+    document.addEventListener('pointermove', (e) => {
+      const el = e.target.closest && e.target.closest('.tile, .card');
+      if (target && target !== el) { target.style.removeProperty('--mx'); target.style.removeProperty('--my'); }
+      target = el;
+      pos = { x: e.clientX, y: e.clientY };
+      if (!el || frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!target) return;
+        const r = target.getBoundingClientRect();
+        target.style.setProperty('--mx', `${pos.x - r.left}px`);
+        target.style.setProperty('--my', `${pos.y - r.top}px`);
+      });
+    }, { passive: true });
+    document.addEventListener('pointerleave', () => { if (target) { target.style.removeProperty('--mx'); target.style.removeProperty('--my'); target = null; } });
+  }
+
+  // Press ripple from the point of contact.
+  document.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest && e.target.closest('.btn, .chip, .segmented button');
+    if (!b || b.disabled || reduceMotion()) return;
+    const r = b.getBoundingClientRect();
+    const size = Math.max(r.width, r.height) * 2.2;
+    const dot = document.createElement('span');
+    dot.className = 'ripple';
+    dot.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
+    if (getComputedStyle(b).position === 'static') b.style.position = 'relative';
+    b.appendChild(dot);
+    setTimeout(() => dot.remove(), 600);
+  });
+
+  // KPI numbers count from their last value (or zero) to the new one.
+  const lastKpi = new Map();
+  const countUp = (el) => {
+    const card = el.closest('.kpi');
+    const key = card ? card.querySelector('.kpi-label')?.textContent : null;
+    const text = el.textContent;
+    const m = /^(.*?)(-?\d[\d,]*(?:\.\d+)?)(.*)$/.exec(text);
+    const prev = key ? lastKpi.get(key) : null;
+    if (key) lastKpi.set(key, text);
+    if (!m || reduceMotion() || prev === text || document.hidden) return;
+    const decimals = (m[2].split('.')[1] || '').length;
+    const to = Number(m[2].replace(/,/g, ''));
+    const pm = prev && /(-?\d[\d,]*(?:\.\d+)?)/.exec(prev);
+    const from = pm ? Number(pm[1].replace(/,/g, '')) : 0;
+    if (!Number.isFinite(to) || from === to) return;
+    const fmt = (v) => `${m[1]}${v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}${m[3]}`;
+    const start = performance.now();
+    const dur = 700;
+    el.classList.add('counting');
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / dur);
+      const v = from + (to - from) * (1 - (1 - k) ** 3);
+      el.textContent = k < 1 ? fmt(v) : text;
+      if (k < 1) requestAnimationFrame(step); else el.classList.remove('counting');
+    };
+    el.textContent = fmt(from);
+    requestAnimationFrame(step);
+  };
+  new MutationObserver((records) => {
+    for (const r of records) for (const n of r.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      if (n.classList.contains('kpi-value')) countUp(n);
+      n.querySelectorAll && n.querySelectorAll('.kpi-value').forEach(countUp);
+    }
+  }).observe(document.querySelector('.main') || document.body, { childList: true, subtree: true });
+
+  // The ink field rests while the tab is hidden.
+  const field = document.querySelector('.ink-field');
+  if (field) document.addEventListener('visibilitychange', () => field.classList.toggle('paused', document.hidden));
+}());
+
+// A splash of process ink from a button: a completed sale is worth a moment.
+function inkSplash(el) {
+  if (!el || reduceMotion() || !el.animate) return;
+  const r = el.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  const inks = ['#00A0DC', '#D6167A', '#F5C518', '#1B1E24'];
+  for (let i = 0; i < 18; i++) {
+    const d = document.createElement('span');
+    d.className = 'splash-dot';
+    d.style.left = `${cx - 4}px`;
+    d.style.top = `${cy - 4}px`;
+    d.style.background = inks[i % 4];
+    document.body.appendChild(d);
+    const angle = (Math.PI * 2 * i) / 18 + (Math.random() - 0.5) * 0.5;
+    const dist = 60 + Math.random() * 70;
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist * 0.75 - 30;
+    d.animate([
+      { transform: 'translate(0, 0) scale(.4)', opacity: 1 },
+      { transform: `translate(${dx * 0.7}px, ${dy * 0.7}px) scale(1)`, opacity: 1, offset: 0.55 },
+      { transform: `translate(${dx}px, ${dy + 40}px) scale(.6)`, opacity: 0 }
+    ], { duration: 820 + Math.random() * 240, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' }).onfinish = () => d.remove();
+  }
+}
+
 // Toasts rise in with a dwell bar; hovering pauses them. Errors are announced
 // assertively, shake once and stay longer (feedback-indicators skill).
 function toast(message, isError) {
@@ -272,6 +380,7 @@ function navigateTo(target) {
   });
   currentView = view;
   currentRoute = route;
+  document.body.dataset.view = view;
   if (decodeURIComponent(location.hash.replace('#', '')) !== route) location.hash = route;
   window.scrollTo(0, 0);
 
@@ -820,6 +929,12 @@ function tweenMoney(el, value) {
 
 function renderTotals() {
   const t = computeTotals();
+  const totalEl = $('calc-total');
+  if (Number(totalEl.dataset.value) !== t.total && totalEl.dataset.value !== undefined && !reduceMotion()) {
+    totalEl.classList.remove('flash-glow');
+    void totalEl.offsetWidth;
+    totalEl.classList.add('flash-glow');
+  }
   $('calc-subtotal').textContent = cur(t.subtotal);
   $('calc-discount').textContent = `− ${cur(t.discount)}`;
   $('calc-tax').textContent = cur(t.tax);
@@ -886,6 +1001,7 @@ async function completeSale() {
     tab.go(`receipt.html?id=${result.id}`);
     const label = btn.innerHTML;
     btn.classList.add('btn-done');
+    inkSplash(btn);
     btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Sale recorded';
     setTimeout(() => { btn.classList.remove('btn-done'); btn.innerHTML = label; }, reduceMotion() ? 600 : 1100);
     resetSale();

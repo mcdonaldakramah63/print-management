@@ -113,6 +113,40 @@ with a dimmed and blurred backdrop, toasts rise in with a dwell bar (errors
 shake once and stay longer), tabs slide their underline, printer issues
 slide in and fold away as "Fixed".
 
+## Glass and glow
+
+Asked for by the shop, built to the ui-ux-pro-max glassmorphism checklist
+(blur 10–20 px, light 1 px edge, a colourful backdrop, text contrast
+checked):
+
+- **Backdrop**: an ink field. Cyan, magenta and yellow blooms diffusing on
+  the stock, with a faint 6 px halftone screen over them (the print
+  trade's own texture).
+- **Glass**: panels are 62 % white with an 18 px blur and 170 % saturation,
+  a white top highlight and a soft shadow. 62 % keeps every text colour at
+  4.5:1 or better even over the most saturated ink (worst case 4.79:1 for
+  cyan links over magenta). Glass inside glass is not blurred twice.
+  Without `backdrop-filter`, or with `prefers-reduced-transparency`, panels
+  are solid sheets.
+- **Glow**: only in process inks and only where it means something. Primary
+  buttons glow cyan on hover with a light sweep; the active nav item and
+  focus rings glow cyan; counts glow magenta; a printer's card glows by its
+  health (green ready, cyan printing, red stopped) and the stopped pill
+  pulses; the printer screen has a phosphor glow; the total flashes cyan
+  when it changes; "short by" glows red.
+- **Performance rule**: moving ink makes every glass panel re-blur every
+  frame (measured 12 fps vs 45 still, software rendering). So the ink only
+  drifts on the sign-in screen; in the app it is still, and settles into a
+  new arrangement when you change page (1.6 s, motion on navigation only).
+  It also rests while the tab is hidden.
+
+More motion, all answering an action: press ripples from the point of
+contact; a pointer-following spotlight on glass panels (mouse only); tiles
+lift and glow on hover; KPI numbers count from their last value; chart
+bars grow in, meters fill, table rows arrive in a 35 ms stagger; feature
+icons tilt on hover; a CMYK ink splash bursts from the button when a sale
+completes; hovering the logo re-prints the colour bar.
+
 ## Checklist before shipping (ui-ux-pro-max)
 
 - Contrast 4.5:1 for text; focus visible on every control.
