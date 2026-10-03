@@ -2381,7 +2381,7 @@ function renderAudit(audit) {
     </div>`).join('')}`;
   $('audit-likely').innerHTML = audit.likely.length === 0
     ? '<p class="muted" style="margin:0;">No hand-rung sales to pair with.</p>'
-    : audit.likely.map((s) => auditRow(s, `<div class="row" style="gap:6px; margin-top:6px;">
+    : (audit.likely_count > audit.likely.length ? `<p class="muted small" style="margin:0 0 6px;">Showing the ${audit.likely.length} surest of ${audit.likely_count}. Confirm these to see more.</p>` : '') + audit.likely.map((s) => auditRow(s, `<div class="row" style="gap:6px; margin-top:6px;">
         <a class="badge info" href="receipt.html?id=${s.match.sale.id}" target="_blank" rel="noopener">${escapeHtml(s.match.sale.receipt_no)}</a>
         <span class="muted small">${Math.round(s.match.confidence * 100)}% match${s.match.sale.customer_name ? ` · till name "${escapeHtml(s.match.sale.customer_name)}"` : ''}</span>
         <button type="button" class="btn btn-outline btn-sm" data-link-session="${s.id}" data-sale="${s.match.sale.id}">Confirm</button>

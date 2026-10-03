@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { round2 } = require('../lib/saleCreator');
-const { SALE_DAY, isDateString, localDateString, daysAgo } = require('../lib/dates');
+const { SALE_DAY, isDateString, localDateString, daysAgo, saleSpan, jobSpan } = require('../lib/dates');
 const { matchUnbilledSessions } = require('../lib/insights/matching');
 const { copyPagesByDay, unbilledCopies } = require('../lib/copies');
 
@@ -25,7 +25,7 @@ function reconcile(from, to) {
       COALESCE(SUM(CASE WHEN color_mode = 'color' AND duplex = 'duplex' THEN MAX(0, 2 * sheets - impressions) END), 0) AS color_blank,
       COALESCE(SUM(CASE WHEN color_mode = 'mono' AND duplex = 'duplex' THEN MAX(0, 2 * sheets - impressions) END), 0) AS mono_blank
     FROM print_jobs
-    WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ?
+    WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ? AND ${jobSpan(from, to)}
     GROUP BY day
   `).all(from, to);
 
@@ -37,7 +37,7 @@ function reconcile(from, to) {
     FROM sale_items si
     JOIN sales s ON s.id = si.sale_id
     JOIN products p ON p.id = si.product_id
-    WHERE s.voided = 0 AND p.print_color_mode IN ('color','mono') AND ${SALE_DAY} BETWEEN ? AND ?
+    WHERE s.voided = 0 AND p.print_color_mode IN ('color','mono') AND ${SALE_DAY} BETWEEN ? AND ? AND ${saleSpan(from, to)}
     GROUP BY day, mode
   `).all(from, to);
 
@@ -125,7 +125,7 @@ function reconcile(from, to) {
   const sessions = db.prepare(`
     SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN sale_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS billed
     FROM print_sessions
-    WHERE id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ?)
+    WHERE id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ? AND ${jobSpan(from, to)})
   `).get(from, to);
 
   return { from, to, rows, totals, sessions, prices: { color: round2(prices.color), mono: round2(prices.mono) }, printServices };
@@ -139,7 +139,7 @@ function sessionAudit(from, to, prices) {
     SELECT ps.id, ps.owner, ps.machine, ps.started_at, ps.ended_at, ps.job_count, ps.color_pages, ps.mono_pages,
            ps.unknown_pages, ps.flags, a.label AS agent_label
     FROM print_sessions ps JOIN agents a ON a.id = ps.agent_id
-    WHERE ps.sale_id IS NULL AND ps.id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ?)
+    WHERE ps.sale_id IS NULL AND ps.id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ? AND ${jobSpan(from, to)})
     ORDER BY ps.ended_at DESC
   `).all(from, to);
   const value = (s) => round2(s.color_pages * prices.color + s.mono_pages * prices.mono);
@@ -155,8 +155,12 @@ function sessionAudit(from, to, prices) {
   const copies = unbilledCopies(from, to).map((c) => ({
     ...c, value: round2(c.color_pages * prices.color + (c.mono_pages + c.unknown_pages) * prices.mono)
   }));
+  // Most confident pairings first; the page shows 100 (a month of a busy
+  // shop has well over a thousand, too many to render or review at once).
+  likely.sort((x, y) => y.match.confidence - x.match.confidence);
   return {
-    likely,
+    likely: likely.slice(0, 100),
+    likely_count: likely.length,
     copies: copies.slice(0, 100),
     copies_count: copies.length,
     copies_value: round2(copies.reduce((n, c) => n + c.value, 0)),

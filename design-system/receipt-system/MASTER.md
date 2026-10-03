@@ -122,8 +122,8 @@ checked):
 - **Backdrop**: an ink field. Cyan, magenta and yellow blooms diffusing on
   the stock, with a faint 6 px halftone screen over them (the print
   trade's own texture).
-- **Glass**: panels are 62 % white with an 18 px blur and 170 % saturation,
-  a white top highlight and a soft shadow. 62 % keeps every text colour at
+- **Glass**: panels are 62 % white over the soft ink, with a white top
+  highlight and a soft shadow (dialogs and toasts add an 18 px blur). 62 % keeps every text colour at
   4.5:1 or better even over the most saturated ink (worst case 4.79:1 for
   cyan links over magenta). Glass inside glass is not blurred twice.
   Without `backdrop-filter`, or with `prefers-reduced-transparency`, panels
@@ -134,11 +134,17 @@ checked):
   health (green ready, cyan printing, red stopped) and the stopped pill
   pulses; the printer screen has a phosphor glow; the total flashes cyan
   when it changes; "short by" glows red.
-- **Performance rule**: moving ink makes every glass panel re-blur every
-  frame (measured 12 fps vs 45 still, software rendering). So the ink only
-  drifts on the sign-in screen; in the app it is still, and settles into a
-  new arrangement when you change page (1.6 s, motion on navigation only).
-  It also rests while the tab is hidden.
+- **Performance rule**: blur is the expensive part, so the glass is
+  *translucency over already-soft ink*, not live blur. The blooms are
+  radial gradients (no `filter: blur`) and resting panels have no
+  `backdrop-filter`; only surfaces that float for a moment (dialogs,
+  toasts, dropdowns) blur what's behind them. Measured on a 4x slowed CPU
+  with no GPU (like a shop PC or remote desktop): scrolling went from
+  12 fps to 60 fps with no visible change. The ink only drifts on the
+  sign-in screen; in the app it settles into a new arrangement when you
+  change page (1.6 s, motion on navigation only), and rests while the tab
+  is hidden. Sticky bars that content scrolls under are near-opaque, not
+  blurred.
 
 More motion, all answering an action: press ripples from the point of
 contact; a pointer-following spotlight on glass panels (mouse only); tiles

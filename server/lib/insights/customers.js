@@ -149,22 +149,24 @@ function resolveCustomers(sinceDays = 365) {
 /** Quintile scores (1-5) for recency, frequency and spend, then a segment. */
 function scoreRFM(customers) {
   if (customers.length === 0) return;
-  const score = (value, values, higherIsBetter) => {
-    const cuts = [0.2, 0.4, 0.6, 0.8].map((q) => quantile(values, q));
+  // Quintile cut-offs once per list (computing them per customer re-sorted
+  // every customer's figures n times: seconds on a year of sales).
+  const cutsOf = (values) => [0.2, 0.4, 0.6, 0.8].map((q) => quantile(values, q));
+  const freqCuts = cutsOf(customers.map((c) => c.visits));
+  const monCuts = cutsOf(customers.map((c) => c.spend));
+  const score = (value, cuts, higherIsBetter) => {
     let s = 1 + cuts.filter((c) => value > c).length;
     if (!higherIsBetter) s = 6 - s;
     return s;
   };
-  const freq = customers.map((c) => c.visits);
-  const mon = customers.map((c) => c.spend);
   for (const c of customers) {
     // Recency on fixed day bands: ranking against other customers is unstable
     // for small shops where everyone came in this week.
     c.r = c.days_since <= 7 ? 5 : c.days_since <= 14 ? 4 : c.days_since <= 30 ? 3 : c.days_since <= 60 ? 2 : 1;
     // Frequency is lumpy (lots of 1s), so score it on absolute visits once
     // the quintiles collapse.
-    c.f = Math.min(5, Math.max(score(c.visits, freq, true), c.visits >= 10 ? 5 : c.visits >= 5 ? 4 : c.visits >= 3 ? 3 : c.visits === 2 ? 2 : 1));
-    c.m = score(c.spend, mon, true);
+    c.f = Math.min(5, Math.max(score(c.visits, freqCuts, true), c.visits >= 10 ? 5 : c.visits >= 5 ? 4 : c.visits >= 3 ? 3 : c.visits === 2 ? 2 : 1));
+    c.m = score(c.spend, monCuts, true);
     c.segment = segmentOf(c);
   }
 }

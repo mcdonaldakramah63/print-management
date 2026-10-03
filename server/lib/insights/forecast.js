@@ -12,7 +12,7 @@
 // day's revenue normally earned by this time of day.
 // ---------------------------------------------------------------
 const db = require('../../db');
-const { localDateString } = require('../dates');
+const { localDateString, saleSpan } = require('../dates');
 const { mean, median, mad, winsorize } = require('./stats');
 
 const SEASON = 7;
@@ -37,6 +37,7 @@ function dailyHistory(today) {
   const rows = db.prepare(`
     SELECT date(created_at, 'localtime') AS day, SUM(total) AS revenue
     FROM sales WHERE voided = 0 AND date(created_at, 'localtime') >= ? AND date(created_at, 'localtime') < ?
+      AND ${saleSpan(from, today, 'created_at')}
     GROUP BY day ORDER BY day
   `).all(from, today);
   if (rows.length === 0) return [];
@@ -94,6 +95,7 @@ function intradayShare(today, now) {
            total
     FROM sales
     WHERE voided = 0 AND date(created_at, 'localtime') >= ? AND date(created_at, 'localtime') < ?
+      AND ${saleSpan(addDays(today, -56), today, 'created_at')}
   `).all(addDays(today, -56), today);
   if (rows.length < 30) return null; // not enough history to trust a profile
   const total = rows.reduce((s, r) => s + r.total, 0);
@@ -108,6 +110,7 @@ function forecastRevenue(now = new Date()) {
   const history = dailyHistory(today);
   const actualToday = db.prepare(`
     SELECT COALESCE(SUM(total), 0) AS revenue FROM sales WHERE voided = 0 AND date(created_at, 'localtime') = ?
+      AND ${saleSpan(today, today, 'created_at')}
   `).get(today).revenue;
 
   const futureDays = Array.from({ length: HORIZON }, (_, i) => addDays(today, i)); // includes today

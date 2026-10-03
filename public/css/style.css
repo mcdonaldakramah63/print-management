@@ -501,15 +501,20 @@ td .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wra
 /* ---------- Glass and glow ----------
    Panels are frosted glass over a field of process ink diffusing in water
    (cyan, magenta and yellow blooms with a faint halftone screen). Glows
-   use the same inks. Fallbacks: solid sheets without backdrop-filter or
-   when the system asks for reduced transparency; still ink when it asks
-   for reduced motion. */
+   use the same inks.
+   Performance: the blooms are soft radial gradients, not blurred shapes,
+   and resting panels are translucent without backdrop-filter. The ink is
+   already soft and still behind them, so re-blurring it under every panel
+   on every scroll frame bought nothing visible and cost most of the frame
+   (12 fps vs 60 fps scrolling, measured on a 4x slowed CPU without GPU,
+   like a shop PC or a remote desktop session). Only surfaces that float
+   for a moment (dialogs, toasts, dropdowns) blur what is behind them. */
 .ink-field { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--stock); }
-.ink-field i { position: absolute; display: block; border-radius: 50%; filter: blur(70px); opacity: .55; will-change: transform; }
+.ink-field i { position: absolute; display: block; border-radius: 50%; opacity: .55; will-change: transform; }
 .ink-field i { transition: transform 1.6s var(--ease-std); }
-.ink-field .ink-c { width: 52vmax; height: 52vmax; left: -14vmax; top: -18vmax; background: #5BBDEB; }
-.ink-field .ink-m { width: 40vmax; height: 40vmax; right: -12vmax; top: 18vh; background: #EE8DBB; opacity: .42; }
-.ink-field .ink-y { width: 38vmax; height: 38vmax; left: 28vw; bottom: -20vmax; background: #F7D64A; opacity: .45; }
+.ink-field .ink-c { width: 60vmax; height: 60vmax; left: -18vmax; top: -22vmax; background: radial-gradient(closest-side, #5BBDEB 55%, rgba(91, 189, 235, 0) 100%); }
+.ink-field .ink-m { width: 48vmax; height: 48vmax; right: -16vmax; top: calc(18vh - 4vmax); background: radial-gradient(closest-side, #EE8DBB 55%, rgba(238, 141, 187, 0) 100%); opacity: .42; }
+.ink-field .ink-y { width: 46vmax; height: 46vmax; left: calc(28vw - 4vmax); bottom: -24vmax; background: radial-gradient(closest-side, #F7D64A 55%, rgba(247, 214, 74, 0) 100%); opacity: .45; }
 /* Moving ink makes every glass panel re-blur each frame, so it only drifts
    on the sign-in screen (one panel). In the app it settles into a new
    arrangement when you change page: motion only on navigation. */
@@ -537,6 +542,9 @@ body[data-view="print-monitor"] .ink-y, body[data-view="reconcile"] .ink-y { tra
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .card, .sidebar, .modal, .lookup-list, .issue, .feature-tile, .tile, .guide-art, .waiting-row-glass {
     background-color: var(--glass);
+  }
+  /* Only floating surfaces blur what is behind them (see above). */
+  .modal, .lookup-list {
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(170%);
     backdrop-filter: blur(var(--glass-blur)) saturate(170%);
   }
@@ -911,8 +919,8 @@ details.card summary { cursor: pointer; }
   .mobile-bar {
     display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 40;
     padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top));
-    background: var(--glass-strong); border-bottom: 1px solid var(--glass-line);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(170%); backdrop-filter: blur(var(--glass-blur)) saturate(170%);
+    /* Nearly opaque instead of blurred: content scrolls under it all the time. */
+    background: rgba(255, 255, 255, .92); border-bottom: 1px solid var(--glass-line);
   }
   .mobile-bar .brand-mark { width: 28px; height: 28px; }
   .mobile-title { flex: 1; min-width: 0; font-family: var(--font-head); font-weight: 650; font-variation-settings: 'wdth' 108; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

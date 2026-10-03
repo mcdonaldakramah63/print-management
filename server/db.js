@@ -369,6 +369,19 @@ CREATE TABLE IF NOT EXISTS printer_info (
 );
 `);
 
+// ---------- Indexes for lookups by sale ----------
+// "Is this sale already linked to a print session / photocopy / job?" runs
+// once per sale in reports and matching: without these it scanned whole
+// tables each time (minutes on a year of data).
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
+CREATE INDEX IF NOT EXISTS idx_print_sessions_sale ON print_sessions(sale_id);
+CREATE INDEX IF NOT EXISTS idx_copy_events_sale ON copy_events(sale_id);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_sale ON print_jobs(sale_id);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_status ON print_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_print_jobs_submitted ON print_jobs(submitted_at);
+`);
+
 // ---------- Remote access ----------
 // Logins survive restarts (the app's 30-day "keep me signed in" needs it),
 // and the shop's link to the relay plus the key that encrypts the status

@@ -17,24 +17,24 @@ function localDayKey(d) {
 router.get('/summary', requireAuth, (req, res) => {
   const today = db.prepare(`
     SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS count
-    FROM sales WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime')
+    FROM sales WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime') AND created_at >= date('now','localtime','-1 day')
   `).get();
 
   const last7Days = db.prepare(`
     SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS count
-    FROM sales WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-6 days')
+    FROM sales WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-6 days') AND created_at >= date('now','localtime','-6 days','-1 day')
   `).get();
 
   const thisMonth = db.prepare(`
     SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS count
-    FROM sales WHERE voided = 0 AND strftime('%Y-%m', created_at,'localtime') = strftime('%Y-%m','now','localtime')
+    FROM sales WHERE voided = 0 AND strftime('%Y-%m', created_at,'localtime') = strftime('%Y-%m','now','localtime') AND created_at >= date('now','localtime','start of month','-1 day')
   `).get();
 
   // Daily revenue for the last 14 days, filled in so days with no sales still show as 0
   const rawSeries = db.prepare(`
     SELECT date(created_at,'localtime') AS day, SUM(total) AS revenue
     FROM sales
-    WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-13 days')
+    WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-13 days') AND created_at >= date('now','localtime','-13 days','-1 day')
     GROUP BY day
   `).all();
   const seriesMap = Object.fromEntries(rawSeries.map((r) => [r.day, r.revenue]));
@@ -50,7 +50,7 @@ router.get('/summary', requireAuth, (req, res) => {
     SELECT si.name, SUM(si.qty) AS qty, SUM(si.line_total) AS revenue
     FROM sale_items si
     JOIN sales s ON s.id = si.sale_id
-    WHERE s.voided = 0 AND date(s.created_at,'localtime') >= date('now','localtime','-29 days')
+    WHERE s.voided = 0 AND date(s.created_at,'localtime') >= date('now','localtime','-29 days') AND s.created_at >= date('now','localtime','-29 days','-1 day')
     GROUP BY si.name
     ORDER BY revenue DESC
     LIMIT 5
@@ -66,7 +66,7 @@ router.get('/summary', requireAuth, (req, res) => {
 
   const paymentMix = db.prepare(`
     SELECT payment_method AS method, COUNT(*) AS count, SUM(total) AS revenue
-    FROM sales WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime')
+    FROM sales WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime') AND created_at >= date('now','localtime','-1 day')
     GROUP BY payment_method ORDER BY revenue DESC
   `).all();
 

@@ -16,7 +16,7 @@
 //   * Late voids: sales voided long after they were rung up.
 // ---------------------------------------------------------------
 const db = require('../../db');
-const { localDateString } = require('../dates');
+const { localDateString, saleSpan } = require('../dates');
 const { betaPrior, robustZ, median } = require('./stats');
 
 function addDays(dateStr, n) {
@@ -34,7 +34,7 @@ function cashierRates(since) {
            SUM(CASE WHEN s.voided = 0 THEN s.subtotal ELSE 0 END) AS gross,
            SUM(CASE WHEN s.voided = 0 AND s.discount_amount > 0 THEN 1 ELSE 0 END) AS discounted
     FROM sales s JOIN users u ON u.id = s.user_id
-    WHERE date(s.created_at, 'localtime') >= ?
+    WHERE date(s.created_at, 'localtime') >= ? AND ${saleSpan(since, null)}
     GROUP BY u.id
   `).all(since);
   const alerts = [];
@@ -91,6 +91,7 @@ function revenueAnomalies(today) {
   const rows = db.prepare(`
     SELECT date(created_at, 'localtime') AS day, SUM(total) AS revenue
     FROM sales WHERE voided = 0 AND date(created_at, 'localtime') >= ? AND date(created_at, 'localtime') < ?
+      AND ${saleSpan(addDays(today, -70), today, 'created_at')}
     GROUP BY day
   `).all(addDays(today, -70), today);
   const map = new Map(rows.map((r) => [r.day, r.revenue]));
@@ -186,7 +187,7 @@ function lateVoids(since) {
     SELECT s.receipt_no, s.total, u.full_name AS voided_by,
            (julianday(s.voided_at) - julianday(s.created_at)) * 24 AS hours
     FROM sales s LEFT JOIN users u ON u.id = s.voided_by
-    WHERE s.voided = 1 AND s.voided_at IS NOT NULL AND date(s.created_at, 'localtime') >= ?
+    WHERE s.voided = 1 AND s.voided_at IS NOT NULL AND date(s.created_at, 'localtime') >= ? AND ${saleSpan(since, null)}
       AND (julianday(s.voided_at) - julianday(s.created_at)) * 24 >= 12
     ORDER BY hours DESC LIMIT 5
   `).all(since);

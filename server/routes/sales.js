@@ -3,7 +3,7 @@ const db = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { createSale, isDayClosed, PAYMENT_METHODS } = require('../lib/saleCreator');
 const { moveStock } = require('../lib/stock');
-const { SALE_DAY, isDateString } = require('../lib/dates');
+const { SALE_DAY, isDateString, saleSpan } = require('../lib/dates');
 const { sendCsv } = require('../lib/csv');
 
 const router = express.Router();
@@ -42,8 +42,8 @@ function buildFilters(query) {
 
   // created_at is stored in UTC; compare on the local calendar date the
   // user picked in the filter.
-  if (isDateString(from)) { where += ` AND ${SALE_DAY} >= ?`; params.push(from); }
-  if (isDateString(to)) { where += ` AND ${SALE_DAY} <= ?`; params.push(to); }
+  if (isDateString(from)) { where += ` AND ${SALE_DAY} >= ? AND ${saleSpan(from, null)}`; params.push(from); }
+  if (isDateString(to)) { where += ` AND ${SALE_DAY} <= ? AND ${saleSpan(null, to)}`; params.push(to); }
   if (cashier_id) { where += ' AND s.user_id = ?'; params.push(Number(cashier_id)); }
   if (PAYMENT_METHODS.includes(payment_method)) { where += ' AND s.payment_method = ?'; params.push(payment_method); }
   if (status === 'voided') where += ' AND s.voided = 1';

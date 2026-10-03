@@ -17,8 +17,8 @@
 // Each session may also stay unmatched at a fixed cost, so weak pairings
 // are rejected instead of forced.
 // ---------------------------------------------------------------
-const db = require('../../db');
-const { hungarian, nameSimilarity } = require('./stats');
+const { sparseAssignment, nameSimilarity } = require('./stats');
+const { saleSpan, jobSpan, addDays } = require('../dates');
 
 const MAX_AFTER_MIN = 180;
 const MAX_BEFORE_MIN = 15;
@@ -48,9 +48,10 @@ function pairCost(session, sale) {
  * linked to any session. Returns Map(sessionId -> { sale, cost, confidence }).
  */
 function matchUnbilledSessions(from, to) {
+  const db = require('../../db');
   const sessions = db.prepare(`
     SELECT id, owner, machine, color_pages, mono_pages, ended_at FROM print_sessions
-    WHERE sale_id IS NULL AND id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ?)
+    WHERE sale_id IS NULL AND id IN (SELECT session_id FROM print_jobs WHERE substr(submitted_at, 1, 10) BETWEEN ? AND ? AND ${jobSpan(from, to)})
   `).all(from, to);
   if (sessions.length === 0) return new Map();
 
@@ -63,26 +64,43 @@ function matchUnbilledSessions(from, to) {
     JOIN products p ON p.id = si.product_id AND p.print_color_mode IS NOT NULL
     WHERE s.voided = 0
       AND date(s.created_at, 'localtime') BETWEEN date(?, '-1 day') AND date(?, '+1 day')
+      AND ${saleSpan(addDays(from, -1), addDays(to, 1))}
       AND NOT EXISTS (SELECT 1 FROM print_sessions ps WHERE ps.sale_id = s.id)
       AND NOT EXISTS (SELECT 1 FROM copy_events ce WHERE ce.sale_id = s.id)
     GROUP BY s.id
   `).all(from, to);
   if (sales.length === 0) return new Map();
+  return matchPairs(sessions, sales);
+}
 
-  // Columns: every candidate sale, then one private "stay unmatched" column per session.
-  const cost = sessions.map((session, i) => [
-    ...sales.map((sale) => pairCost(session, sale)),
-    ...sessions.map((_, k) => (k === i ? UNMATCHED_COST : BIG))
-  ]);
-  const assignment = hungarian(cost);
+/** The optimal session -> sale pairing (pure: sessions and sales in, Map out). */
+function matchPairs(sessions, sales) {
+  // Only pairs within the time window and page tolerance can match: build
+  // that sparse graph (sales sorted by time, binary search for the window)
+  // and solve it exactly with sparseAssignment. The dense Hungarian over
+  // every session x every sale was O(n^3) and blocked the server for
+  // minutes on a month of a busy shop's data.
+  const salesByTime = sales.map((sale, j) => ({ j, t: ts(sale.created_at) })).filter((x) => Number.isFinite(x.t)).sort((a, b) => a.t - b.t);
+  const edges = sessions.map((session) => {
+    const end = ts(session.ended_at);
+    const out = [];
+    if (!Number.isFinite(end)) return out;
+    for (let k = lowerBound(salesByTime, end - MAX_BEFORE_MIN * 60000); k < salesByTime.length && salesByTime[k].t <= end + MAX_AFTER_MIN * 60000; k++) {
+      const j = salesByTime[k].j;
+      const c = pairCost(session, sales[j]);
+      if (c < UNMATCHED_COST) out.push([j, c]);
+    }
+    return out;
+  });
+  const assignment = sparseAssignment(edges, sales.length, UNMATCHED_COST);
 
   const result = new Map();
-  assignment.forEach((col, i) => {
-    if (col < 0 || col >= sales.length) return;
-    const c = cost[i][col];
-    if (c >= UNMATCHED_COST) return;
+  assignment.forEach((j, i) => {
+    if (j < 0) return;
+    const c = edges[i].find(([col]) => col === j)[1];
+    const sale = sales[j];
     result.set(sessions[i].id, {
-      sale: { id: sales[col].id, receipt_no: sales[col].receipt_no, customer_name: sales[col].customer_name },
+      sale: { id: sale.id, receipt_no: sale.receipt_no, customer_name: sale.customer_name },
       cost: Math.round(c * 100) / 100,
       // Logistic map of cost to a 0–1 confidence: ~0.5 halfway to the
       // rejection cost, never a flat 100% even for a perfect-looking pair.
@@ -92,4 +110,14 @@ function matchUnbilledSessions(from, to) {
   return result;
 }
 
-module.exports = { matchUnbilledSessions, pairCost };
+function lowerBound(sorted, t) {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid].t < t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
+module.exports = { matchUnbilledSessions, matchPairs, pairCost, UNMATCHED_COST, BIG };

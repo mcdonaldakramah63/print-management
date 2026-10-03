@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { round2 } = require('../lib/saleCreator');
-const { SALE_DAY, isDateString, localDateString } = require('../lib/dates');
+const { SALE_DAY, isDateString, localDateString, saleSpan } = require('../lib/dates');
 const { sendCsv } = require('../lib/csv');
 
 const router = express.Router();
@@ -20,7 +20,7 @@ function readRange(query) {
 // ---------------------------------------------------------------
 router.get('/summary', requireAuth, (req, res) => {
   const { from, to } = readRange(req.query);
-  const range = `${SALE_DAY} BETWEEN ? AND ?`;
+  const range = `${SALE_DAY} BETWEEN ? AND ? AND ${saleSpan(from, to)}`;
 
   const totals = db.prepare(`
     SELECT
@@ -81,7 +81,7 @@ router.get('/export.csv', requireAuth, (req, res) => {
     FROM sale_items si
     JOIN sales s ON s.id = si.sale_id
     JOIN users u ON u.id = s.user_id
-    WHERE ${SALE_DAY} BETWEEN ? AND ?
+    WHERE ${SALE_DAY} BETWEEN ? AND ? AND ${saleSpan(from, to)}
     ORDER BY s.created_at, s.id, si.id
   `).all(from, to);
 
@@ -103,7 +103,7 @@ function dayFigures(date) {
       COALESCE(SUM(CASE WHEN voided = 0 AND payment_method = 'cash' THEN total END), 0) AS cash_total,
       COALESCE(SUM(CASE WHEN voided = 0 AND payment_method = 'momo' THEN total END), 0) AS momo_total,
       COALESCE(SUM(CASE WHEN voided = 0 AND payment_method = 'card' THEN total END), 0) AS card_total
-    FROM sales s WHERE ${SALE_DAY} = ?
+    FROM sales s WHERE ${SALE_DAY} = ? AND ${saleSpan(date, date)}
   `).get(date);
   for (const k of ['gross_total', 'cash_total', 'momo_total', 'card_total']) row[k] = round2(row[k]);
 
@@ -111,7 +111,7 @@ function dayFigures(date) {
     SELECT u.full_name AS name, COUNT(*) AS count, SUM(s.total) AS revenue,
            SUM(CASE WHEN s.payment_method = 'cash' THEN s.total ELSE 0 END) AS cash
     FROM sales s JOIN users u ON u.id = s.user_id
-    WHERE s.voided = 0 AND ${SALE_DAY} = ?
+    WHERE s.voided = 0 AND ${SALE_DAY} = ? AND ${saleSpan(date, date)}
     GROUP BY u.id ORDER BY revenue DESC
   `).all(date);
   return row;

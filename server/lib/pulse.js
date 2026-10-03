@@ -44,14 +44,14 @@ const safe = (fn, fallback) => { try { return fn(); } catch { return fallback; }
 function buildPulse(now = new Date()) {
   const settings = db.prepare('SELECT business_name, currency FROM settings WHERE id = 1').get() || {};
   const totals = (where) => db.prepare(`SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS count FROM sales WHERE voided = 0 AND ${where}`).get();
-  const today = totals("date(created_at,'localtime') = date('now','localtime')");
-  const yesterday = totals("date(created_at,'localtime') = date('now','localtime','-1 day')");
-  const week = totals("date(created_at,'localtime') >= date('now','localtime','-6 days')");
-  const month = totals("strftime('%Y-%m', created_at,'localtime') = strftime('%Y-%m','now','localtime')");
+  const today = totals("date(created_at,'localtime') = date('now','localtime') AND created_at >= date('now','localtime','-1 day')");
+  const yesterday = totals("date(created_at,'localtime') = date('now','localtime','-1 day') AND created_at >= date('now','localtime','-1 day','-1 day')");
+  const week = totals("date(created_at,'localtime') >= date('now','localtime','-6 days') AND created_at >= date('now','localtime','-6 days','-1 day')");
+  const month = totals("strftime('%Y-%m', created_at,'localtime') = strftime('%Y-%m','now','localtime') AND created_at >= date('now','localtime','start of month','-1 day')");
 
   const rawSeries = db.prepare(`
     SELECT date(created_at,'localtime') AS day, SUM(total) AS revenue FROM sales
-    WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-13 days') GROUP BY day
+    WHERE voided = 0 AND date(created_at,'localtime') >= date('now','localtime','-13 days') AND created_at >= date('now','localtime','-13 days','-1 day') GROUP BY day
   `).all();
   const byDay = Object.fromEntries(rawSeries.map((r) => [r.day, r.revenue]));
   const series = [];
@@ -64,12 +64,12 @@ function buildPulse(now = new Date()) {
 
   const paymentMix = db.prepare(`
     SELECT payment_method AS method, COUNT(*) AS count, SUM(total) AS revenue FROM sales
-    WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime') GROUP BY payment_method ORDER BY revenue DESC
+    WHERE voided = 0 AND date(created_at,'localtime') = date('now','localtime') AND created_at >= date('now','localtime','-1 day') GROUP BY payment_method ORDER BY revenue DESC
   `).all();
   const lastSale = db.prepare('SELECT receipt_no, total, created_at FROM sales WHERE voided = 0 ORDER BY id DESC LIMIT 1').get() || null;
   const cashiers = db.prepare(`
     SELECT u.full_name AS name, COUNT(*) AS count, SUM(s.total) AS revenue FROM sales s JOIN users u ON u.id = s.user_id
-    WHERE s.voided = 0 AND date(s.created_at,'localtime') = date('now','localtime') GROUP BY u.id ORDER BY revenue DESC LIMIT 8
+    WHERE s.voided = 0 AND date(s.created_at,'localtime') = date('now','localtime') AND s.created_at >= date('now','localtime','-1 day') GROUP BY u.id ORDER BY revenue DESC LIMIT 8
   `).all();
   const lowStock = db.prepare(`
     SELECT name, stock_qty, reorder_level FROM products

@@ -194,7 +194,116 @@ function hungarian(cost) {
   return assignment;
 }
 
+/**
+ * Minimum-cost assignment on a sparse graph, where each row may also take a
+ * private "none" option at a fixed cost. Same optimum as hungarian() on the
+ * full matrix padded with one private column per row, but each row is added
+ * by a Dijkstra shortest augmenting path (Jonker–Volgenant, with
+ * potentials) over only the edges that exist, and the search stops at the
+ * first free column, so it stays local: a month of a busy shop's print
+ * sessions vs sales takes milliseconds instead of minutes.
+ *
+ * edges[i]: [[col, cost], ...] with col in 0..nCols-1. Returns an array
+ * mapping each row to its column, or -1 for "none".
+ */
+function sparseAssignment(edges, nCols, noneCost) {
+  const n = edges.length;
+  // Shift every cost by the same amount so all are >= 0 (each row takes
+  // exactly one option, so the optimum doesn't change).
+  let minCost = noneCost;
+  for (const list of edges) for (const [, c] of list) if (c < minCost) minCost = c;
+  const shift = minCost < 0 ? -minCost : 0;
+  const total = nCols + n; // real columns, then one "none" column per row
+  const u = new Float64Array(n);
+  const v = new Float64Array(total);
+  const colRow = new Int32Array(total).fill(-1);
+  const rowCol = new Int32Array(n).fill(-1);
+  const dist = new Float64Array(total);
+  const seen = new Int32Array(total).fill(-1); // stamp: dist valid for this round
+  const done = new Int32Array(total).fill(-1); // stamp: finalised this round
+  const via = new Int32Array(total);
+  const rowDist = new Float64Array(n);
+
+  for (let i0 = 0; i0 < n; i0++) {
+    const heap = [];
+    const push = (d, j) => {
+      heap.push([d, j]);
+      let k = heap.length - 1;
+      while (k > 0) {
+        const p = (k - 1) >> 1;
+        if (heap[p][0] <= heap[k][0]) break;
+        [heap[p], heap[k]] = [heap[k], heap[p]];
+        k = p;
+      }
+    };
+    const pop = () => {
+      const top = heap[0];
+      const last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        let k = 0;
+        for (;;) {
+          const l = 2 * k + 1;
+          const r = l + 1;
+          let m = k;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === k) break;
+          [heap[m], heap[k]] = [heap[k], heap[m]];
+          k = m;
+        }
+      }
+      return top;
+    };
+    const relax = (r, base) => {
+      const step = (j, c) => {
+        if (done[j] === i0) return;
+        const d = base + c + shift - u[r] - v[j];
+        if (seen[j] !== i0 || d < dist[j]) {
+          seen[j] = i0;
+          dist[j] = d;
+          via[j] = r;
+          push(d, j);
+        }
+      };
+      for (const [j, c] of edges[r]) step(j, c);
+      step(nCols + r, noneCost);
+    };
+
+    const tree = [i0];
+    const finals = [];
+    rowDist[i0] = 0;
+    relax(i0, 0);
+    let end = -1;
+    let delta = 0;
+    while (heap.length) {
+      const [d, j] = pop();
+      if (done[j] === i0 || d > dist[j]) continue;
+      done[j] = i0;
+      finals.push(j);
+      if (colRow[j] === -1) { end = j; delta = d; break; }
+      const r = colRow[j];
+      rowDist[r] = d;
+      tree.push(r);
+      relax(r, d);
+    }
+    // Potentials keep every reduced cost >= 0 and matched edges at 0.
+    for (const r of tree) u[r] += delta - rowDist[r];
+    for (const j of finals) v[j] -= delta - dist[j];
+    // Flip the augmenting path.
+    for (let j = end; ;) {
+      const r = via[j];
+      const prev = rowCol[r];
+      rowCol[r] = j;
+      colRow[j] = r;
+      if (r === i0) break;
+      j = prev;
+    }
+  }
+  return Array.from(rowCol, (c) => (c >= nCols ? -1 : c));
+}
+
 module.exports = {
   sum, mean, quantile, median, mad, std, robustZ, winsorize, wilsonLower, betaPrior,
-  levenshtein, jaroWinkler, nameSimilarity, hungarian
+  levenshtein, jaroWinkler, nameSimilarity, hungarian, sparseAssignment
 };
