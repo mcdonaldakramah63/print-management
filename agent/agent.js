@@ -19,6 +19,7 @@ const readline = require('readline');
 const { countDocumentPages } = require('./docPages');
 const { createSupplyPoller, discoverPrinterAddresses } = require('./printerSupplies');
 const { createCopyMonitor } = require('./copyMonitor');
+const { createPrinterControl, PowerShellHost } = require('./printerControl');
 const fs = require('fs');
 const path = require('path');
 
@@ -32,12 +33,13 @@ const BASE_DIR = STANDALONE ? path.dirname(process.execPath) : __dirname;
 const CONFIG_PATH = process.env.AGENT_CONFIG || path.join(BASE_DIR, 'config.json');
 const QUEUE_PATH = path.join(BASE_DIR, 'queue.json');
 const COPY_QUEUE_PATH = path.join(BASE_DIR, 'copies-queue.json');
+const CONTROL_JOURNAL_PATH = path.join(BASE_DIR, 'control-journal.json');
 
-function embeddedWatcherScript() {
+function embeddedScript(name) {
   const dir = path.join(require('os').tmpdir(), 'receipt-print-agent');
   fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, 'watch-print-jobs.ps1');
-  fs.writeFileSync(file, Buffer.from(require('node:sea').getAsset('watch-print-jobs.ps1')));
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, Buffer.from(require('node:sea').getAsset(name)));
   return file;
 }
 
@@ -56,7 +58,7 @@ const {
   printers = [],
   heartbeatIntervalMs = 60000,
   flushIntervalMs = 5000,
-  scriptPath = STANDALONE ? embeddedWatcherScript() : path.join(__dirname, 'watch-print-jobs.ps1'),
+  scriptPath = STANDALONE ? embeddedScript('watch-print-jobs.ps1') : path.join(__dirname, 'watch-print-jobs.ps1'),
   printerColorOverride = {},
   printerDuplexAssumption = {},
   inspectDocuments = false
@@ -263,6 +265,20 @@ process.on('SIGTERM', () => { log('Shutting down.'); process.exit(0); });
 const copyMonitor = createCopyMonitor({ config, postJson, log, queuePath: COPY_QUEUE_PATH, discover: discoverPrinterAddresses });
 
 copyMonitor.start().catch((err) => log(`Photocopy detection could not start: ${err.message}`));
+
+// The printers' front panel and controls, on the web page.
+const printerControl = createPrinterControl({
+  config,
+  postJson,
+  log,
+  journalPath: CONTROL_JOURNAL_PATH,
+  executor: new PowerShellHost({
+    scriptPath: STANDALONE ? embeddedScript('printer-control.ps1') : path.join(__dirname, 'printer-control.ps1'),
+    printers,
+    log
+  })
+});
+printerControl.start();
 startWatcher();
 setInterval(flushQueue, flushIntervalMs);
 setInterval(heartbeat, heartbeatIntervalMs);

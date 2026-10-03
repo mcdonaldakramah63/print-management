@@ -23,7 +23,8 @@
     <a class="nav-link" data-view="reports" href="#reports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Reports &amp; close</a>
     <a class="nav-link admin-only" data-view="customers" href="#customers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Customers</a>
 
-    <div class="nav-section admin-only">Print shop</div>
+    <div class="nav-section">Print shop</div>
+    <a class="nav-link" data-view="printers" href="#printers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5"/><rect x="3" y="8" width="18" height="9" rx="2"/><path d="M7 14h10v7H7z"/><circle cx="17.5" cy="11.5" r="1" fill="currentColor"/></svg>Printers<span class="count" id="printer-alert-count" hidden></span></a>
     <a class="nav-link admin-only" data-view="print-monitor" href="#print-monitor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5"/><rect x="3" y="8" width="18" height="9" rx="2"/><path d="M7 14h10v7H7z"/></svg>Print monitor<span class="count" id="unreviewed-count" hidden></span></a>
     <a class="nav-link admin-only" data-view="reconcile" href="#reconcile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/></svg>Printed vs sold</a>
 
@@ -228,6 +229,16 @@
       </div>
       <div class="chips" id="segment-chips" role="group" aria-label="Customer groups"></div>
       <div class="card"><div class="table-wrap" id="customers-table-wrap"></div></div>
+    </section>
+
+    <!-- ============ PRINTERS (everyone) ============ -->
+    <section class="view" id="view-printers" aria-labelledby="h-printers">
+      <div class="page-head">
+        <div><span class="eyebrow">Print shop</span><h1 id="h-printers">Printers</h1>
+          <p class="muted" style="margin:6px 0 0; max-width:720px;">Each printer's panel without walking to it: what it says, what's wrong and how to fix it, and its queue. Updates every few seconds while this page is open.</p></div>
+        <div class="page-actions"><span class="muted small" id="printers-updated" aria-live="polite"></span><button class="btn btn-outline" type="button" id="printers-refresh">Refresh</button></div>
+      </div>
+      <div id="printers-wrap" class="stack"></div>
     </section>
 
     <!-- ============ PRINT MONITOR (admin) ============ -->

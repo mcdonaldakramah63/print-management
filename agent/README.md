@@ -113,6 +113,35 @@ Settings in `config.json`:
 Pages printed while the agent isn't running can't be told apart from
 copies, so the agent starts counting afresh each time it starts.
 
+## Printers page (remote control)
+
+The app's **Printers** page (open to cashiers too) shows each printer's
+panel from the till, so nobody has to walk to it:
+
+- **What the printer says**: its own screen text, paper trays and levels,
+  open doors, and its alert messages (network printers with SNMP).
+- **What's wrong and how to fix it**: the printer, Windows and the queue's
+  progress are combined into plain issues ("Paper jam", "Tray 1 is empty",
+  "Windows is set to use this printer offline", "Report.pdf hasn't moved
+  for 4 min") with steps and one-click fixes.
+- **The queue**: progress and an estimated wait from the printer's
+  measured speed, with Hold / Release / Restart / Cancel per job.
+- **Controls**: pause and resume printing, bring online, print a test
+  page; admins can also clear the queue and change default sides, colour
+  and paper size.
+
+How it works: the agent runs `printer-control.ps1` as a long-lived helper
+and syncs with the app (every 3 s while someone has the page open, else
+every 30 s). Actions wait in the app until the agent collects them; each
+is checked against the live queue, runs at most once (the agent keeps a
+journal in `control-journal.json`) and expires after a few minutes if the
+PC is off, rather than running late.
+
+Pausing a printer, printing a test page and clearing other users' jobs need
+the agent to run as a Windows user allowed to *manage* the printer (an
+administrator, or someone given "Manage printers" in the printer's
+security settings). Set `"remoteControl": false` to turn this off.
+
 ## Optional: counting the whole document's pages
 
 Windows only tells the agent how many pages were *printed*, not how long the

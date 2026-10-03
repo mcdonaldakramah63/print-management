@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert');
-const { readPrinter, encOid, decOid } = require('../snmp');
+const { readPrinter, readDeviceStatus, encOid, decOid } = require('../snmp');
 const { startFakePrinter } = require('./fakePrinter');
 
 (async () => {
@@ -38,6 +38,23 @@ const { startFakePrinter } = require('./fakePrinter');
   assert.strictEqual(by.Yellow.percent, 80);
   assert.strictEqual(by.Imaging.kind, 'drum');
   assert.strictEqual(by.Toner.receptacle, true); assert.strictEqual(by.Toner.kind, 'waste_toner');
+  // Front panel: status, error bits, screen text, trays, covers, alerts
+  const panel = await startFakePrinter({
+    '1.3.6.1.2.1.25.3.5.1.1.1': 3, '1.3.6.1.2.1.25.3.2.1.5.1': 3, '1.3.6.1.2.1.25.3.5.1.2.1': '\x40\x04',
+    '1.3.6.1.2.1.43.16.5.1.2.1.1': 'Load Tray 1', '1.3.6.1.2.1.43.16.5.1.2.1.2': 'A4 Plain',
+    '1.3.6.1.2.1.43.8.2.1.9.1.1': 250, '1.3.6.1.2.1.43.8.2.1.10.1.1': 0, '1.3.6.1.2.1.43.8.2.1.12.1.1': 'A4 Plain', '1.3.6.1.2.1.43.8.2.1.13.1.1': 'Tray 1',
+    '1.3.6.1.2.1.43.8.2.1.9.1.2': 500, '1.3.6.1.2.1.43.8.2.1.10.1.2': -3, '1.3.6.1.2.1.43.8.2.1.13.1.2': 'Tray 2',
+    '1.3.6.1.2.1.43.6.1.1.2.1.1': 'Front Door', '1.3.6.1.2.1.43.6.1.1.3.1.1': 4,
+    '1.3.6.1.2.1.43.18.1.1.2.1.7': 4, '1.3.6.1.2.1.43.18.1.1.8.1.7': 'Tray 1 empty'
+  });
+  const st = await readDeviceStatus('127.0.0.1', { port: panel.port, timeoutMs: 500 });
+  panel.close();
+  assert.deepStrictEqual([st.status, st.device_status], ['idle', 'warning']);
+  assert.deepStrictEqual(st.errors, ['no_paper', 'input_tray_empty']);
+  assert.deepStrictEqual(st.display, ['Load Tray 1', 'A4 Plain']);
+  assert.deepStrictEqual(st.trays.map((x) => [x.name, x.level, x.percent, x.empty]), [['Tray 1', 0, 0, true], ['Tray 2', -3, null, false]]);
+  assert.deepStrictEqual(st.covers, [{ name: 'Front Door', status: 'closed' }]);
+  assert.deepStrictEqual(st.alerts, [{ severity: 'warning', code: null, description: 'Tray 1 empty' }]);
   // Unreachable printer times out cleanly
   await assert.rejects(readPrinter('127.0.0.1', { port: 9, timeoutMs: 200, retries: 0 }));
   console.log('SNMP tests passed');

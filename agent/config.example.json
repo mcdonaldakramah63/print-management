@@ -12,6 +12,7 @@
   "detectCopies": true,
   "copyPollSeconds": 60,
   "copyCounterOids": {},
+  "remoteControl": true,
   "printerColorOverride": {
     "HP LaserJet 500 MFP M525": "mono"
   },

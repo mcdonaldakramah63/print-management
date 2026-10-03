@@ -323,6 +323,45 @@ CREATE INDEX IF NOT EXISTS idx_copy_events_started ON copy_events(started_at);
 CREATE INDEX IF NOT EXISTS idx_copy_events_address ON copy_events(address, started_at);
 `);
 
+// Remote printer control: the latest front-panel snapshot per printer, a
+// short history of it (for stall detection and print-speed learning), and
+// the command queue the agents work through.
+db.exec(`
+CREATE TABLE IF NOT EXISTS printer_states (
+  agent_id      INTEGER NOT NULL REFERENCES agents(id),
+  printer_name  TEXT NOT NULL,
+  data          TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  PRIMARY KEY (agent_id, printer_name)
+);
+CREATE TABLE IF NOT EXISTS printer_state_history (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id      INTEGER NOT NULL REFERENCES agents(id),
+  printer_name  TEXT NOT NULL,
+  at            TEXT NOT NULL,
+  data          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_printer_state_history ON printer_state_history(agent_id, printer_name, at);
+CREATE TABLE IF NOT EXISTS printer_commands (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id      INTEGER NOT NULL REFERENCES agents(id),
+  printer_name  TEXT NOT NULL,
+  action        TEXT NOT NULL,
+  params        TEXT NOT NULL DEFAULT '{}',
+  target_key    TEXT NOT NULL DEFAULT '',
+  status        TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','sent','done','failed','expired')),
+  requested_by  INTEGER REFERENCES users(id),
+  created_at    TEXT NOT NULL,
+  expires_at    TEXT NOT NULL,
+  lease_until   TEXT,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  result        TEXT,
+  error         TEXT,
+  finished_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_printer_commands_agent ON printer_commands(agent_id, status);
+`);
+
 // ---------- Seed default settings row ----------
 const settingsExists = db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
 if (!settingsExists) {

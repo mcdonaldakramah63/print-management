@@ -306,6 +306,99 @@ async function readCounters(host, options = {}, extraOids = []) {
   };
 }
 
+// ---------------------------------------------------------------
+// Front-panel state: what the printer's own screen and menus show
+// ---------------------------------------------------------------
+const PANEL = {
+  deviceStatus: '1.3.6.1.2.1.25.3.2.1.5',          // hrDeviceStatus
+  errorState: '1.3.6.1.2.1.25.3.5.1.2',            // hrPrinterDetectedErrorState (bit string)
+  display: '1.3.6.1.2.1.43.16.5.1.2',              // prtConsoleDisplayBufferText
+  alerts: '1.3.6.1.2.1.43.18.1.1',                 // prtAlertEntry
+  inputs: '1.3.6.1.2.1.43.8.2.1',                  // prtInputEntry
+  covers: '1.3.6.1.2.1.43.6.1.1'                   // prtCoverEntry
+};
+const DEVICE_STATUS = { 1: 'unknown', 2: 'running', 3: 'warning', 4: 'testing', 5: 'down' };
+// hrPrinterDetectedErrorState, bit 0 = most significant bit of the first octet (RFC 3805).
+const ERROR_BITS = ['low_paper', 'no_paper', 'low_toner', 'no_toner', 'door_open', 'jammed', 'offline', 'service_requested',
+  'input_tray_missing', 'output_tray_missing', 'marker_supply_missing', 'output_near_full', 'output_full', 'input_tray_empty',
+  'overdue_maintenance'];
+const COVER_STATUS = { 3: 'open', 4: 'closed', 5: 'open', 6: 'closed' };
+const ALERT_SEVERITY = { 1: 'other', 3: 'critical', 4: 'warning', 5: 'warning' };
+
+function decodeErrorBits(value) {
+  const bytes = typeof value === 'string' ? Array.from(value, (c) => c.charCodeAt(0) & 0xff) : [];
+  const out = [];
+  ERROR_BITS.forEach((name, bit) => {
+    const byte = bytes[Math.floor(bit / 8)] || 0;
+    if (byte & (0x80 >> (bit % 8))) out.push(name);
+  });
+  return out;
+}
+
+/** Group walked table rows by row index: Map(index -> { column: value }). */
+function tableRows(rows, base) {
+  const byIndex = new Map();
+  for (const r of rows) {
+    const parts = r.oid.slice(base.length + 1).split('.');
+    const index = parts.slice(1).join('.');
+    if (!byIndex.has(index)) byIndex.set(index, { index });
+    byIndex.get(index)[Number(parts[0])] = r.value;
+  }
+  return [...byIndex.values()];
+}
+
+/**
+ * Everything the printer's front panel would tell you: overall status, the
+ * error flags, the text on its screen, active alerts, paper trays and
+ * covers. Every part is optional; printers implement different subsets.
+ */
+async function readDeviceStatus(host, options = {}) {
+  const version = options.version ?? 1;
+  const s = new SnmpSession(host, { timeoutMs: 1500, retries: 1, ...options, version });
+  try {
+    const status = await s.walk(OID.printerStatus, 4);
+    if (status.length === 0) throw new Error(`No printer status from ${host}`);
+    const safeWalk = (oid, max) => s.walk(oid, max).catch(() => []);
+    const device = await safeWalk(PANEL.deviceStatus, 4);
+    const errors = await safeWalk(PANEL.errorState, 4);
+    const display = await safeWalk(PANEL.display, 16);
+    const alerts = await safeWalk(PANEL.alerts, 200);
+    const inputs = await safeWalk(PANEL.inputs, 400);
+    const covers = await safeWalk(PANEL.covers, 40);
+    return {
+      reachable: true,
+      status: PRINTER_STATUS[Number(status[0].value)] || 'unknown',
+      device_status: device.length ? DEVICE_STATUS[Number(device[0].value)] || 'unknown' : 'unknown',
+      errors: errors.length ? decodeErrorBits(errors[0].value) : [],
+      display: display.map((r) => String(r.value || '').trim()).filter(Boolean).slice(0, 8),
+      alerts: tableRows(alerts, PANEL.alerts).map((a) => ({
+        severity: ALERT_SEVERITY[Number(a[2])] || 'other',
+        code: Number(a[7]) || null,
+        description: String(a[8] || '').trim().slice(0, 200)
+      })).filter((a) => a.description).slice(0, 20),
+      trays: tableRows(inputs, PANEL.inputs).map((t) => {
+        const level = Number(t[10]);
+        const max = Number(t[9]);
+        return {
+          index: t.index,
+          name: String(t[13] || t[18] || `Tray ${t.index.split('.').pop()}`).trim().slice(0, 60),
+          media: String(t[12] || '').trim().slice(0, 60),
+          level: Number.isFinite(level) ? level : null,   // -3 = some paper, -2 = unknown
+          max: Number.isFinite(max) && max > 0 ? max : null,
+          percent: Number.isFinite(level) && level >= 0 && max > 0 ? Math.round((level / max) * 100) : null,
+          empty: level === 0
+        };
+      }).slice(0, 12),
+      covers: tableRows(covers, PANEL.covers).map((c) => ({
+        name: String(c[2] || 'Cover').trim().slice(0, 60),
+        status: COVER_STATUS[Number(c[3])] || 'unknown'
+      })).slice(0, 12)
+    };
+  } finally {
+    s.close();
+  }
+}
+
 /** Colorant names the printer reports ("black", "cyan", ...). */
 async function readColorants(host, options = {}) {
   const s = new SnmpSession(host, { ...options, version: options.version ?? 1 });
@@ -316,4 +409,4 @@ async function readColorants(host, options = {}) {
   }
 }
 
-module.exports = { SnmpSession, readPrinter, readCounters, readColorants, supplyPercent, buildRequest, parseResponse, encOid, decOid, OID, tlv, encInt };
+module.exports = { SnmpSession, readPrinter, readCounters, readColorants, readDeviceStatus, decodeErrorBits, PANEL, supplyPercent, buildRequest, parseResponse, encOid, decOid, OID, tlv, encInt };

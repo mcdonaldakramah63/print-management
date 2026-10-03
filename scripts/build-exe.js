@@ -196,6 +196,10 @@ Print monitoring (on each PC that has a printer)
 3. Run PrintMonitorAgent.exe (or add it to Task Scheduler "At log on").
    Network printers with SNMP enabled also report their toner levels and
    photocopies (from the printer's own page counter).
+4. The Printers page then shows each printer's panel and queue, and lets
+   cashiers fix common problems from the till. Pausing a printer or
+   clearing the queue needs the agent to run as a user allowed to manage
+   that printer (e.g. an administrator).
 `;
 
 function checkNode() {
@@ -230,7 +234,10 @@ async function main() {
 
   // Agent: bundle + embed the PowerShell watcher
   bundle(path.join(ROOT, 'agent/agent.js'), path.join(BUILD, 'agent.cjs'));
-  const agentBlob = makeBlob('agent', 'build/agent.cjs', { 'watch-print-jobs.ps1': 'agent/watch-print-jobs.ps1' });
+  const agentBlob = makeBlob('agent', 'build/agent.cjs', {
+    'watch-print-jobs.ps1': 'agent/watch-print-jobs.ps1',
+    'printer-control.ps1': 'agent/printer-control.ps1'
+  });
   await inject(base, path.join(out, exe('PrintMonitorAgent')), agentBlob);
   log(`Built ${exe('PrintMonitorAgent')}`);
 

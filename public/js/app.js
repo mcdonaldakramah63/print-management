@@ -14,7 +14,7 @@ let currentView = null;
 let historyPage = 1;
 
 const ADMIN_VIEWS = ['products', 'print-monitor', 'reconcile', 'users', 'settings', 'customers'];
-const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'customers', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
+const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'customers', 'printers', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
 const PAY_LABELS = { cash: 'Cash', momo: 'Mobile money', card: 'Card' };
 
 const $ = (id) => document.getElementById(id);
@@ -52,6 +52,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   setupCustomerLookup();
   setupHistory();
   setupReports();
+  setupPrinters();
   if (isAdmin()) {
     setupPrintMonitor();
     setupReconcile();
@@ -248,6 +249,7 @@ function navigateTo(view) {
     history: loadHistory,
     reports: () => Promise.all([loadReport(), loadClose(), loadClosings(), ...(isAdmin() ? [loadTraffic(), loadMix()] : [])]),
     customers: loadCustomers,
+    printers: loadPrinters,
     'print-monitor': () => Promise.all([loadPrintSummary(), loadSessions(), loadCopies(), loadAgents(), loadSupplies()]),
     reconcile: loadReconcile,
     products: loadProducts,
@@ -1061,6 +1063,239 @@ async function loadClosings() {
       <td><div class="actions"><button type="button" class="btn btn-ghost btn-sm" data-close-date="${escapeHtml(c.business_date)}">View</button><a class="btn btn-outline btn-sm" href="zreport.html?date=${encodeURIComponent(c.business_date)}" target="_blank" rel="noopener">Z-report</a></div></td>
     </tr>`).join('')}
     </tbody></table>`;
+}
+
+// ---------------------------------------------------------------
+// Printers: each printer's panel and controls, for everyone
+// ---------------------------------------------------------------
+const HEALTH = {
+  ready: ['Ready', 'ok'], busy: ['Printing', 'info'], warning: ['Needs attention', 'warn'],
+  error: ['Not printing', 'danger'], offline: ['Not reporting', '']
+};
+const SEVERITY_ICON = { critical: '!', warning: '!', info: 'i' };
+const JOB_ACT_LABEL = { pause_job: 'Hold', resume_job: 'Release', restart_job: 'Restart', cancel_job: 'Cancel' };
+const DUPLEX_LABEL = { OneSided: 'One side', TwoSidedLongEdge: 'Both sides (long edge)', TwoSidedShortEdge: 'Both sides (short edge)' };
+const PENDING_LABEL = {
+  cancel_job: 'Cancelling', pause_job: 'Holding', resume_job: 'Releasing', restart_job: 'Restarting', pause_printer: 'Pausing the printer',
+  resume_printer: 'Resuming the printer', set_online: 'Bringing it online', test_page: 'Printing a test page', clear_queue: 'Clearing the queue',
+  set_defaults: 'Changing default settings'
+};
+let printerList = [];
+const printerCardSig = new Map();
+const watchedCommands = new Map(); // command id -> printer name
+
+function setupPrinters() {
+  $('printers-refresh').addEventListener('click', () => loadPrinters().catch((err) => toast(err.message, true)));
+  $('printers-wrap').addEventListener('click', onPrinterAction);
+  // While the page is open, refresh often; elsewhere, just keep the nav badge current.
+  setInterval(() => {
+    if (document.hidden) return;
+    if (currentView === 'printers') loadPrinters().catch(() => {});
+  }, 4000);
+  const glance = () => api('GET', '/api/printers?glance=1').then(({ printers }) => updatePrinterBadge(printers)).catch(() => {});
+  glance();
+  setInterval(() => { if (!document.hidden && currentView !== 'printers') glance(); }, 60000);
+}
+
+function updatePrinterBadge(printers) {
+  const bad = printers.filter((p) => p.health === 'error' || p.health === 'offline').length;
+  const el = $('printer-alert-count');
+  el.hidden = bad === 0;
+  el.textContent = String(bad);
+  el.title = `${plural(bad, 'printer')} need attention`;
+}
+
+async function loadPrinters() {
+  const { printers } = await api('GET', '/api/printers');
+  printerList = printers;
+  updatePrinterBadge(printers);
+  $('printers-updated').textContent = `Updated ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
+  const wrap = $('printers-wrap');
+  if (printers.length === 0) {
+    printerCardSig.clear();
+    wrap.innerHTML = `<div class="card">${emptyState(isAdmin()
+      ? 'No printers reported yet. Install the print agent on the PC each printer is connected to (Print monitor > Register agent).'
+      : 'No printers reported yet. Ask an admin to install the print agent on the printer\'s PC.')}</div>`;
+    return;
+  }
+  // Re-render only the cards that changed, and never the one being used.
+  const keys = new Set(printers.map((p) => p.key));
+  wrap.querySelectorAll('[data-printer-key]').forEach((el) => { if (!keys.has(el.dataset.printerKey)) { el.remove(); printerCardSig.delete(el.dataset.printerKey); } });
+  wrap.querySelectorAll(':scope > :not([data-printer-key])').forEach((el) => el.remove());
+  let prev = null;
+  for (const p of printers) {
+    const { updated_at: _u, ...rest } = p;
+    const sig = JSON.stringify(rest);
+    let el = wrap.querySelector(`[data-printer-key="${CSS.escape(p.key)}"]`);
+    const busy = el && (el.contains(document.activeElement) && document.activeElement !== document.body);
+    if (!el || (printerCardSig.get(p.key) !== sig && !busy)) {
+      const fresh = document.createElement('div');
+      fresh.innerHTML = printerCard(p);
+      const card = fresh.firstElementChild;
+      if (el) el.replaceWith(card); else if (prev) prev.after(card); else wrap.prepend(card);
+      el = card;
+      printerCardSig.set(p.key, sig);
+    }
+    prev = el;
+  }
+}
+
+function printerByKey(key) { return printerList.find((p) => p.key === key); }
+
+function trayHtml(t) {
+  const pct = t.percent !== null ? t.percent : t.level === -3 ? null : null;
+  const label = t.empty ? 'Empty' : t.percent !== null ? `${t.percent}%` : t.level === -3 ? 'Has paper' : 'Unknown';
+  return `<div class="tray-row${t.empty ? ' is-empty' : ''}">
+    <span class="tray-name">${escapeHtml(t.name)}${t.media ? ` <span class="muted">· ${escapeHtml(t.media)}</span>` : ''}</span>
+    <span class="tray-bar" aria-hidden="true"><span style="width:${pct !== null ? pct : t.level === -3 ? 50 : 0}%"${pct === null && t.level === -3 ? ' class="partial"' : ''}></span></span>
+    <span class="tray-level">${label}</span>
+  </div>`;
+}
+
+function printerCard(p) {
+  const [healthLabel, healthKind] = HEALTH[p.health] || HEALTH.offline;
+  const can = (a) => p.actions.includes(a);
+  const pendingJob = new Set(p.pending.filter((c) => c.params && c.params.job_id).map((c) => c.params.job_id));
+  const pendingPrinter = new Set(p.pending.filter((c) => !(c.params && c.params.job_id)).map((c) => c.action));
+  const paused = p.issues.some((i) => i.key === 'paused');
+  const btn = (action, label, extra = '', cls = 'btn-outline') => `<button type="button" class="btn ${cls} btn-sm" data-printer-act="${action}" data-key="${escapeHtml(p.key)}"${extra}${pendingPrinter.has(action) ? ' disabled' : ''}>${escapeHtml(label)}</button>`;
+  const jobBtn = (j, action) => can(action) ? `<button type="button" class="btn btn-ghost btn-sm" data-printer-act="${action}" data-key="${escapeHtml(p.key)}" data-job="${j.id}" data-doc="${escapeHtml(j.document)}"${pendingJob.has(j.id) ? ' disabled' : ''}>${JOB_ACT_LABEL[action]}</button>` : '';
+
+  const device = p.device;
+  const screen = p.screen.length ? p.screen : [];
+  const panel = device ? `
+      <div class="lcd" role="group" aria-label="Printer screen">
+        ${screen.length ? screen.map((l) => `<div>${escapeHtml(l)}</div>`).join('') : `<div>${escapeHtml(device.reachable === false ? 'No reply from the printer' : device.status === 'printing' ? 'Printing…' : device.status === 'warmup' ? 'Warming up…' : 'Ready')}</div>`}
+      </div>
+      ${device.trays.length ? `<div class="stack" style="gap:6px;"><div class="mini-label">Paper</div>${device.trays.map(trayHtml).join('')}</div>` : ''}
+      ${device.covers.length ? `<div class="row" style="gap:6px; flex-wrap:wrap;">${device.covers.map((c) => `<span class="badge ${c.status === 'open' ? 'warn' : ''}">${escapeHtml(c.name)}: ${c.status === 'open' ? 'open' : 'closed'}</span>`).join('')}</div>` : ''}
+      ${device.alerts.length ? `<div class="stack" style="gap:4px;"><div class="mini-label">Printer messages</div>${device.alerts.slice(0, 4).map((a) => `<div class="small">${a.severity === 'critical' ? '<span class="badge warn">Critical</span> ' : ''}${escapeHtml(a.description)}</div>`).join('')}</div>` : ''}`
+    : `<div class="lcd lcd-off"><div>${escapeHtml(p.host ? 'Printer screen not available' : 'USB / local printer')}</div></div>
+       <p class="muted small" style="margin:0;">${p.host ? 'The printer did not share its panel (SNMP may be off).' : 'Only network printers share their screen, trays and covers. Queue controls still work.'}</p>`;
+
+  const issues = p.issues.length === 0 ? '' : `<ul class="issue-list">${p.issues.map((i) => `
+      <li class="issue sev-${i.severity}">
+        <span class="issue-icon" aria-hidden="true">${SEVERITY_ICON[i.severity]}</span>
+        <div class="issue-body">
+          <div class="issue-title">${escapeHtml(i.title)}${i.confirmed ? ' <span class="badge" title="Reported by the printer and by Windows">Confirmed</span>' : ''}</div>
+          ${i.detail ? `<div class="muted small">${escapeHtml(i.detail)}</div>` : ''}
+          ${i.steps.length ? `<ol class="issue-steps">${i.steps.map((st) => `<li>${escapeHtml(st)}</li>`).join('')}</ol>` : ''}
+          ${i.fixes.filter((f) => can(f.action)).length ? `<div class="row" style="gap:6px; margin-top:8px; flex-wrap:wrap;">${i.fixes.filter((f) => can(f.action)).map((f) => `<button type="button" class="btn btn-primary btn-sm" data-printer-act="${f.action}" data-key="${escapeHtml(p.key)}"${f.params ? ` data-job="${f.params.job_id}" data-doc="${escapeHtml(f.params.document)}"` : ''}${(f.params && pendingJob.has(f.params.job_id)) || pendingPrinter.has(f.action) ? ' disabled' : ''}>${escapeHtml(f.label)}</button>`).join('')}</div>` : ''}
+        </div>
+      </li>`).join('')}</ul>`;
+
+  const queue = p.queue.length === 0 ? '<p class="muted" style="margin:0;">Nothing waiting.</p>' : `
+    <div class="table-wrap"><table class="queue-table">
+      <thead><tr><th>Document</th><th>Progress</th><th>Status</th><th class="num">Wait</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>${p.queue.map((j) => {
+        const held = /Paused/.test(j.status);
+        return `<tr${j.id === p.stalled_job_id ? ' class="is-stalled"' : ''}>
+          <td><div style="font-weight:600;">${escapeHtml(j.document || '(untitled)')}</div><div class="muted small">${escapeHtml(j.owner || '')}</div></td>
+          <td data-label="Progress" style="min-width:140px;">${j.total_pages ? `<div class="small">${j.pages_printed} of ${j.total_pages} pages</div><div class="tray-bar"><span style="width:${Math.round((j.progress || 0) * 100)}%"></span></div>` : '<span class="muted small">Pages unknown</span>'}</td>
+          <td class="small" data-label="Status">${escapeHtml(j.status || 'Waiting')}</td>
+          <td class="num small" data-label="Wait">${j.eta_min ? `~${j.eta_min} min` : '<span class="muted">&mdash;</span>'}</td>
+          <td><div class="actions">${pendingJob.has(j.id) ? '<span class="badge info">Working…</span>' : `${jobBtn(j, held ? 'resume_job' : 'pause_job')}${jobBtn(j, 'restart_job')}${jobBtn(j, 'cancel_job')}`}</div></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+
+  const cfg = p.config;
+  const settings = cfg && can('set_defaults') ? `
+    <form class="defaults-form" data-key="${escapeHtml(p.key)}">
+      <div class="field"><label>Sides</label><select name="duplex">${Object.entries(DUPLEX_LABEL).map(([v, l]) => `<option value="${v}"${cfg.duplex === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label>Colour</label><select name="color"><option value="true"${cfg.color ? ' selected' : ''}>Colour</option><option value="false"${cfg.color ? '' : ' selected'}>Black &amp; white</option></select></div>
+      <div class="field"><label>Paper</label><select name="paper_size">${['A4', 'A3', 'A5', 'Letter', 'Legal'].map((v) => `<option${cfg.paper_size === v ? ' selected' : ''}>${v}</option>`).join('')}${['A4', 'A3', 'A5', 'Letter', 'Legal'].includes(cfg.paper_size) ? '' : `<option selected value="">${escapeHtml(cfg.paper_size || 'Other')}</option>`}</select></div>
+      <button type="button" class="btn btn-outline btn-sm" data-printer-act="set_defaults" data-key="${escapeHtml(p.key)}"${pendingPrinter.has('set_defaults') ? ' disabled' : ''}>Apply</button>
+    </form>` : cfg ? `<p class="muted small" style="margin:0;">Defaults: ${escapeHtml(DUPLEX_LABEL[cfg.duplex] || cfg.duplex || '?')} · ${cfg.color ? 'colour' : 'black &amp; white'} · ${escapeHtml(cfg.paper_size || '?')}</p>` : '';
+
+  const pending = p.pending.length ? `<div class="row" style="gap:6px; flex-wrap:wrap;" aria-live="polite">${p.pending.map((c) => `<span class="badge info"><span class="spinner" aria-hidden="true"></span>${escapeHtml(PENDING_LABEL[c.action] || c.verb)}${c.params && c.params.document ? ` "${escapeHtml(c.params.document)}"` : ''}…</span>`).join('')}</div>` : '';
+  const failed = p.recent.filter((c) => c.status === 'failed' || c.status === 'expired').slice(0, 2);
+  const recent = failed.length ? failed.map((c) => `<div class="small" style="color:var(--warn-ink);">${escapeHtml(c.verb)}${c.params && c.params.document ? ` "${escapeHtml(c.params.document)}"` : ''}: ${escapeHtml(c.error || c.status)}</div>`).join('') : '';
+
+  return `<article class="card printer-card health-${p.health}" data-printer-key="${escapeHtml(p.key)}" aria-labelledby="pn-${escapeHtml(p.key.replace(/[^\w-]/g, '_'))}">
+    <div class="printer-head">
+      <div style="min-width:0;">
+        <h2 id="pn-${escapeHtml(p.key.replace(/[^\w-]/g, '_'))}" class="printer-name">${escapeHtml(p.name)}${p.is_default ? ' <span class="badge">Default</span>' : ''}</h2>
+        <div class="muted small">On ${escapeHtml(p.agent_label)}${p.host ? ` · ${escapeHtml(p.host)}` : ''}${p.speed && p.speed.source === 'learned' ? ` · about ${p.speed.ppm} pages/min` : ''}${p.stale ? ` · last report ${escapeHtml(timeOf(p.updated_at))}` : ''}</div>
+      </div>
+      <span class="badge ${healthKind} health-pill">${healthLabel}</span>
+    </div>
+    <div class="printer-headline">${escapeHtml(p.headline)}</div>
+    ${pending}${recent}
+    <div class="printer-grid">
+      <div class="stack" style="gap:10px;">${panel}</div>
+      <div class="stack" style="gap:14px; min-width:0;">
+        ${issues}
+        <div class="stack" style="gap:8px;"><div class="mini-label">Queue${p.queue.length ? ` · ${p.queue.length}` : ''}</div>${queue}</div>
+        <div class="row printer-controls">
+          ${paused ? btn('resume_printer', 'Resume printing', '', 'btn-primary') : can('pause_printer') ? btn('pause_printer', 'Pause printing') : ''}
+          ${can('test_page') ? btn('test_page', 'Print test page') : ''}
+          ${can('clear_queue') && p.queue.length ? btn('clear_queue', 'Clear queue', '', 'btn-ghost') : ''}
+          ${p.host ? `<a class="btn btn-ghost btn-sm" href="http://${escapeHtml(p.host)}/" target="_blank" rel="noopener">Printer's own page</a>` : ''}
+        </div>
+        ${settings}
+      </div>
+    </div>
+  </article>`;
+}
+
+async function onPrinterAction(e) {
+  const b = e.target.closest('[data-printer-act]');
+  if (!b || b.disabled) return;
+  const p = printerByKey(b.dataset.key);
+  if (!p) return;
+  const action = b.dataset.printerAct;
+  const params = {};
+  if (b.dataset.job) Object.assign(params, { job_id: Number(b.dataset.job), document: b.dataset.doc });
+  if (action === 'set_defaults') {
+    const form = b.closest('form');
+    params.duplex = form.elements.duplex.value;
+    params.color = form.elements.color.value === 'true';
+    if (form.elements.paper_size.value) params.paper_size = form.elements.paper_size.value;
+  }
+  const send = async () => {
+    const { command } = await api('POST', '/api/printers/commands', { agent_id: p.agent_id, printer: p.name, action, params });
+    watchCommand(command.id, p.name);
+    await loadPrinters();
+  };
+  const confirmText = {
+    cancel_job: [`Cancel "${params.document}"?`, 'It is removed from the queue. Pages already printed stay printed.', 'Cancel job'],
+    restart_job: [`Restart "${params.document}"?`, 'It prints again from the first page.', 'Restart'],
+    clear_queue: [`Clear every job on ${p.name}?`, `${plural(p.queue.length, 'job')} will be removed.`, 'Clear queue']
+  }[action];
+  if (confirmText) {
+    openModal({ title: confirmText[0], body: `<p style="margin:0;">${escapeHtml(confirmText[1])}</p>`, submitLabel: confirmText[2], danger: action !== 'restart_job', onSubmit: send });
+    return;
+  }
+  b.disabled = true;
+  try { await send(); } catch (err) { toast(err.message, true); b.disabled = false; }
+}
+
+// Follow a command until the printer's PC reports back, then say how it went.
+function watchCommand(id, printerName) {
+  if (watchedCommands.has(id)) return;
+  watchedCommands.set(id, printerName);
+  const started = Date.now();
+  const tick = async () => {
+    try {
+      const { command } = await api('GET', `/api/printers/commands/${id}`);
+      if (command.status === 'done') {
+        watchedCommands.delete(id);
+        const removed = command.result && command.result.removed;
+        toast(`${printerName}: ${command.verb}${command.params.document ? ` "${command.params.document}"` : ''} done${removed != null ? ` (${plural(removed, 'job')} removed)` : ''}.`);
+        if (currentView === 'printers') loadPrinters().catch(() => {});
+        return;
+      }
+      if (command.status === 'failed' || command.status === 'expired') {
+        watchedCommands.delete(id);
+        toast(`${printerName}: ${command.verb} didn't work. ${command.error || ''}`, true);
+        if (currentView === 'printers') loadPrinters().catch(() => {});
+        return;
+      }
+    } catch (_) { /* keep trying */ }
+    if (Date.now() - started < 6 * 60 * 1000) setTimeout(tick, 1500); else watchedCommands.delete(id);
+  };
+  setTimeout(tick, 1000);
 }
 
 // ---------------------------------------------------------------

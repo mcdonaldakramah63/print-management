@@ -24,8 +24,8 @@ jobs:
 
       - run: npm ci
 
-      - name: Agent tests (SNMP)
-        run: npm run test:agent
+      - name: Tests (agent + server)
+        run: npm test
 
       - name: Build ReceiptSystem.exe and PrintMonitorAgent.exe
         run: npm run build:exe
@@ -62,7 +62,7 @@ jobs:
 
           # Agent: register, configure, run, and check it reports in.
           $agent = Invoke-RestMethod -Method Post "$base/api/agents" -WebSession $s -ContentType $json -Body '{"label":"CI runner"}'
-          @{ backendUrl = $base; agentApiKey = $agent.api_key; heartbeatIntervalMs = 2000; readSupplies = $false } |
+          @{ backendUrl = $base; agentApiKey = $agent.api_key; heartbeatIntervalMs = 2000; readSupplies = $false; controlIdleIntervalMs = 2000 } |
             ConvertTo-Json | Set-Content -Encoding utf8 "$dir/config.json"
           $agentProc = Start-Process -FilePath "$dir/PrintMonitorAgent.exe" -WorkingDirectory $dir -PassThru `
             -RedirectStandardOutput agent.log -RedirectStandardError agent.err
@@ -72,6 +72,37 @@ jobs:
           Get-Content agent.log -ErrorAction SilentlyContinue
           if ($ci.online -ne 1) { Get-Content agent.err -ErrorAction SilentlyContinue; throw 'PrintMonitorAgent.exe did not report in' }
           Write-Host 'Agent OK'
+
+          # Remote printer control through the real PowerShell host: pause a
+          # printer from the web API, see it reported paused, resume it.
+          $printers = @()
+          for ($i = 0; $i -lt 30 -and $printers.Count -eq 0; $i++) {
+            Start-Sleep -Seconds 2
+            $printers = @((Invoke-RestMethod "$base/api/printers" -WebSession $s).printers)
+          }
+          if ($printers.Count -eq 0) { Get-Content agent.log; throw 'No printers reported by the control host' }
+          Write-Host "Printers: $(($printers | ForEach-Object { "$($_.name) [$($_.health)]" }) -join ', ')"
+          $target = $printers | Where-Object { $_.name -like 'Microsoft Print to PDF*' } | Select-Object -First 1
+          if (-not $target) { $target = $printers[0] }
+          function Invoke-PrinterCommand($action) {
+            $body = @{ agent_id = $target.agent_id; printer = $target.name; action = $action } | ConvertTo-Json
+            $cmd = (Invoke-RestMethod -Method Post "$base/api/printers/commands" -WebSession $s -ContentType $json -Body $body).command
+            for ($i = 0; $i -lt 30 -and $cmd.status -in @('queued', 'sent'); $i++) {
+              Start-Sleep -Seconds 1
+              $cmd = (Invoke-RestMethod "$base/api/printers/commands/$($cmd.id)" -WebSession $s).command
+            }
+            if ($cmd.status -ne 'done') { Get-Content agent.log; throw "$action on $($target.name): $($cmd.status) $($cmd.error)" }
+          }
+          Invoke-PrinterCommand 'pause_printer'
+          $paused = $false
+          for ($i = 0; $i -lt 15 -and -not $paused; $i++) {
+            Start-Sleep -Seconds 1
+            $p = (Invoke-RestMethod "$base/api/printers" -WebSession $s).printers | Where-Object { $_.name -eq $target.name }
+            $paused = @($p.issues | Where-Object { $_.key -eq 'paused' }).Count -gt 0
+          }
+          if (-not $paused) { throw "Printer didn't show as paused: $($p | ConvertTo-Json -Depth 5)" }
+          Invoke-PrinterCommand 'resume_printer'
+          Write-Host "Printer control OK on $($target.name)"
 
           Stop-Process -Id $agentProc.Id -Force
           Stop-Process -Id $server.Id -Force
