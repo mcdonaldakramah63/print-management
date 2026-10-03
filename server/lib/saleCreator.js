@@ -70,14 +70,17 @@ function isDayClosed(date) {
  * paymentMethod  - 'cash' | 'momo' | 'card' (default cash)
  * amountTendered - cash handed over (cash only, optional; must cover the total)
  * printSessionIds - client print sessions this sale bills (optional)
+ * copyEventIds   - detected photocopy runs this sale bills (optional)
  */
 function createSale({
   userId, customerName, customerPhone, items, discountType, discountValue,
-  paymentMethod, amountTendered, printSessionIds
+  paymentMethod, amountTendered, printSessionIds, copyEventIds
 }) {
   validateItems(items);
   const sessionIds = Array.isArray(printSessionIds) ? [...new Set(printSessionIds.map(Number))] : [];
   if (sessionIds.some((id) => !Number.isInteger(id))) throw new Error('Invalid print session');
+  const copyIds = Array.isArray(copyEventIds) ? [...new Set(copyEventIds.map(Number))] : [];
+  if (copyIds.some((id) => !Number.isInteger(id))) throw new Error('Invalid photocopy run');
 
   if (isDayClosed(localDateString())) {
     throw new Error('Today has already been closed. An admin must reopen it in Reports before more sales can be recorded.');
@@ -130,6 +133,10 @@ function createSale({
     UPDATE print_sessions SET sale_id = ?, billed_at = datetime('now') WHERE id = ? AND sale_id IS NULL
   `);
 
+  const linkCopies = db.prepare(`
+    UPDATE copy_events SET status = 'billed', sale_id = ?, billed_at = datetime('now') WHERE id = ? AND status = 'open'
+  `);
+
   let receiptNo;
   const saleId = db.transaction(() => {
     // Generated inside the transaction so the number and the insert are atomic.
@@ -152,6 +159,9 @@ function createSale({
     for (const sessionId of sessionIds) {
       const linked = linkSession.run(id, sessionId);
       if (linked.changes === 0) throw new Error('That print session was already billed or no longer exists');
+    }
+    for (const copyId of copyIds) {
+      if (linkCopies.run(id, copyId).changes === 0) throw new Error('Those photocopies were already billed or dismissed');
     }
     return id;
   })();

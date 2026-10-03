@@ -61,6 +61,10 @@ function parseProductBody(body, existingId) {
       // 'color' / 'mono' marks a print service: its quantity sold counts as
       // pages in the printed-vs-sold reconciliation.
       print_color_mode: body.print_color_mode === 'color' || body.print_color_mode === 'mono' ? body.print_color_mode : null,
+      // Photocopy or print, and one or both sides. A two-sided service is
+      // sold per sheet and counts as 2 pages per unit.
+      print_kind: body.print_kind === 'copy' ? 'copy' : 'print',
+      print_sides: Number(body.print_sides) === 2 ? 2 : 1,
       // Optional: what one unit costs you, for margin reports.
       cost_price: body.cost_price === '' || body.cost_price == null ? null : numberOr(body.cost_price, null)
     }
@@ -74,9 +78,10 @@ router.post('/', requireAdmin, (req, res) => {
 
   const id = db.transaction(() => {
     const info = db.prepare(`
-      INSERT INTO products (name, sku, category, price, stock_qty, reorder_level, track_stock, print_color_mode, cost_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(v.name, v.sku, v.category, v.price, v.track_stock ? v.stock_qty : 0, v.reorder_level, v.track_stock, v.print_color_mode, v.cost_price);
+      INSERT INTO products (name, sku, category, price, stock_qty, reorder_level, track_stock, print_color_mode, cost_price, print_kind, print_sides)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(v.name, v.sku, v.category, v.price, v.track_stock ? v.stock_qty : 0, v.reorder_level, v.track_stock, v.print_color_mode, v.cost_price,
+      v.print_kind, v.print_sides);
     if (v.track_stock && v.stock_qty) {
       insertMovement.run(info.lastInsertRowid, v.stock_qty, 'initial', null, req.session.user.id, '');
     }
@@ -102,10 +107,12 @@ router.put('/:id', requireAdmin, (req, res) => {
     db.prepare(`
       UPDATE products SET
         name = ?, sku = ?, category = ?, price = ?,
-        reorder_level = ?, track_stock = ?, active = ?, print_color_mode = ?, cost_price = ?
+        reorder_level = ?, track_stock = ?, active = ?, print_color_mode = ?, cost_price = ?, print_kind = ?, print_sides = ?
       WHERE id = ?
     `).run(v.name, v.sku, v.category, v.price, v.reorder_level, v.track_stock, active, v.print_color_mode,
-      req.body.cost_price === undefined ? product.cost_price : v.cost_price, product.id);
+      req.body.cost_price === undefined ? product.cost_price : v.cost_price,
+      req.body.print_kind === undefined ? product.print_kind : v.print_kind,
+      req.body.print_sides === undefined ? product.print_sides : v.print_sides, product.id);
     // A changed stock count from the edit form is logged like any other
     // stock movement, so the history always adds up to the current level.
     const delta = v.stock_qty - product.stock_qty;

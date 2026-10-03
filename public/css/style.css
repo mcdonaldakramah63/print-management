@@ -322,6 +322,9 @@ td .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wra
 .coverage .bar.partial > div { background: #C2620A; }
 .waiting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line-soft); }
 .waiting-row:first-child { border-top: none; padding-top: 0; }
+.copy-item { padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.copy-item:first-child { border-top: none; padding-top: 0; }
+.copy-item.is-muted { opacity: .6; }
 .chip-remove { border: none; background: none; cursor: pointer; color: inherit; padding: 0 0 0 4px; font-size: 15px; }
 
 /* ---------- Z-report card ---------- */

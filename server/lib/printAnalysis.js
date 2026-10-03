@@ -346,27 +346,38 @@ function backfill() {
 // ---------------------------------------------------------------
 function suggestLines(sessionId) {
   const rows = db.prepare(`
-    SELECT color_mode, paper_size, SUM(COALESCE(impressions, pages, 0)) AS pages
-    FROM print_jobs WHERE session_id = ? GROUP BY color_mode, paper_size
+    SELECT color_mode, paper_size, CASE WHEN duplex = 'duplex' THEN 2 ELSE 1 END AS sides,
+           SUM(COALESCE(impressions, pages, 0)) AS pages, SUM(COALESCE(sheets, impressions, pages, 0)) AS sheets
+    FROM print_jobs WHERE session_id = ? GROUP BY color_mode, paper_size, sides
   `).all(sessionId);
   const services = db.prepare(`
-    SELECT id, name, price, print_color_mode FROM products
+    SELECT id, name, price, print_color_mode, print_kind, print_sides FROM products
     WHERE active = 1 AND print_color_mode IS NOT NULL ORDER BY price ASC, id ASC
   `).all();
+
+  // Print services first (photocopy services only if that's all there is),
+  // then a product whose name mentions the paper size (e.g. "B&W print A3").
+  function pick(mode, size, sides) {
+    const same = services.filter((p) => p.print_color_mode === mode && p.print_sides === sides);
+    const candidates = same.some((p) => p.print_kind === 'print') ? same.filter((p) => p.print_kind === 'print') : same;
+    return (size && candidates.find((p) => new RegExp(`\\b${size}\\b`, 'i').test(p.name))) ||
+      candidates.find((p) => !/\b(A3|A5|Letter|Legal)\b/i.test(p.name)) || candidates[0];
+  }
 
   const lines = new Map();
   const unmatched = [];
   for (const r of rows) {
     if (!r.pages) continue;
     if (r.color_mode !== 'color' && r.color_mode !== 'mono') { unmatched.push({ reason: 'mode_unknown', pages: r.pages }); continue; }
-    const candidates = services.filter((p) => p.print_color_mode === r.color_mode);
-    // Prefer a product whose name mentions the paper size (e.g. "B&W print A3").
     const size = paperLabel(r.paper_size);
-    const product = (size && candidates.find((p) => new RegExp(`\\b${size}\\b`, 'i').test(p.name))) ||
-      candidates.find((p) => !/\b(A3|A5|Letter|Legal)\b/i.test(p.name)) || candidates[0];
+    // Printed on both sides: charge per sheet with a two-sided service when
+    // the shop has one, else per page like any other print.
+    const twoSided = r.sides === 2 ? pick(r.color_mode, size, 2) : null;
+    const product = twoSided || pick(r.color_mode, size, 1);
     if (!product) { unmatched.push({ reason: 'no_product', color_mode: r.color_mode, pages: r.pages }); continue; }
     const line = lines.get(product.id) || { product_id: product.id, name: product.name, unit_price: product.price, qty: 0 };
-    line.qty += r.pages;
+    line.qty += twoSided ? r.sheets : r.pages;
+    if (twoSided) line.unit = 'sheet';
     lines.set(product.id, line);
   }
   return { lines: [...lines.values()], unmatched };

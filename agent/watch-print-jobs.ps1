@@ -246,6 +246,10 @@ try {
         $settings = $null
         try { $settings = [SpoolerJob]::Read($id.Printer, $id.JobId) } catch {}
         $jobCache[$key] = @{ Settings = $settings; SeenAt = (Get-Date) }
+        # Tell agent.js a job is on its way to this printer, so photocopy
+        # detection doesn't mistake its pages for walk-up copies.
+        Write-Output (@{ event = "spooling"; printer_name = $id.Printer; external_job_id = "$($id.JobId)" } | ConvertTo-Json -Compress)
+        [Console]::Out.Flush()
         # Forget jobs that never finished (deleted while we weren't looking).
         foreach ($stale in @($jobCache.Keys | Where-Object { $jobCache[$_].SeenAt -lt (Get-Date).AddHours(-12) })) {
           $jobCache.Remove($stale)

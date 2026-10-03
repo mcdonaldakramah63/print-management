@@ -56,14 +56,15 @@ function matchUnbilledSessions(from, to) {
 
   const sales = db.prepare(`
     SELECT s.id, s.receipt_no, s.customer_name, s.created_at,
-           SUM(CASE WHEN p.print_color_mode = 'color' THEN si.qty ELSE 0 END) AS color_qty,
-           SUM(CASE WHEN p.print_color_mode = 'mono' THEN si.qty ELSE 0 END) AS mono_qty
+           SUM(CASE WHEN p.print_color_mode = 'color' THEN si.qty * p.print_sides ELSE 0 END) AS color_qty,
+           SUM(CASE WHEN p.print_color_mode = 'mono' THEN si.qty * p.print_sides ELSE 0 END) AS mono_qty
     FROM sales s
     JOIN sale_items si ON si.sale_id = s.id
     JOIN products p ON p.id = si.product_id AND p.print_color_mode IS NOT NULL
     WHERE s.voided = 0
       AND date(s.created_at, 'localtime') BETWEEN date(?, '-1 day') AND date(?, '+1 day')
       AND NOT EXISTS (SELECT 1 FROM print_sessions ps WHERE ps.sale_id = s.id)
+      AND NOT EXISTS (SELECT 1 FROM copy_events ce WHERE ce.sale_id = s.id)
     GROUP BY s.id
   `).all(from, to);
   if (sales.length === 0) return new Map();

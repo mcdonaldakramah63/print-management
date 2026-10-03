@@ -6,6 +6,7 @@ let currentSettings = null;
 let catalog = [];          // active products, for the checkout
 let cart = [];             // [{ key, product_id, name, unit_price, qty, session_id? }]
 let cartSessions = new Map(); // print session id -> label, billed by this sale
+let cartCopies = new Map();   // photocopy run id -> label, billed by this sale
 let cartKey = 0;
 let payMethod = 'cash';
 let catalogCategory = 'All';
@@ -247,7 +248,7 @@ function navigateTo(view) {
     history: loadHistory,
     reports: () => Promise.all([loadReport(), loadClose(), loadClosings(), ...(isAdmin() ? [loadTraffic(), loadMix()] : [])]),
     customers: loadCustomers,
-    'print-monitor': () => Promise.all([loadPrintSummary(), loadSessions(), loadAgents(), loadSupplies()]),
+    'print-monitor': () => Promise.all([loadPrintSummary(), loadSessions(), loadCopies(), loadAgents(), loadSupplies()]),
     reconcile: loadReconcile,
     products: loadProducts,
     users: loadUsers,
@@ -443,18 +444,28 @@ function setupSale() {
     const inputs = $('cart-lines').querySelectorAll('.line-name');
     if (inputs.length) inputs[inputs.length - 1].focus();
   });
-  $('clear-cart-btn').addEventListener('click', () => { cart = []; cartSessions.clear(); renderCart(); renderWaitingSessions(); });
+  $('clear-cart-btn').addEventListener('click', () => { cart = []; cartSessions.clear(); cartCopies.clear(); renderCart(); renderWaitingSessions(); });
   $('waiting-refresh').addEventListener('click', () => loadWaitingSessions());
   $('waiting-list').addEventListener('click', (e) => {
     const b = e.target.closest('[data-add-session]');
     if (b) addSessionToCart(Number(b.dataset.addSession));
+    const c = e.target.closest('[data-add-copy]');
+    if (c) addCopyToCart(Number(c.dataset.addCopy));
   });
   $('cart-sessions').addEventListener('click', (e) => {
     const b = e.target.closest('[data-remove-session]');
-    if (!b) return;
-    const id = Number(b.dataset.removeSession);
-    cart = cart.filter((l) => l.session_id !== id);
-    cartSessions.delete(id);
+    if (b) {
+      const id = Number(b.dataset.removeSession);
+      cart = cart.filter((l) => l.session_id !== id);
+      cartSessions.delete(id);
+    }
+    const c = e.target.closest('[data-remove-copy]');
+    if (c) {
+      const id = Number(c.dataset.removeCopy);
+      cart = cart.filter((l) => l.copy_id !== id);
+      cartCopies.delete(id);
+    }
+    if (!b && !c) return;
     renderCart();
     renderWaitingSessions();
   });
@@ -542,7 +553,7 @@ function renderCatalog() {
   }
   tiles.innerHTML = list.length === 0 ? emptyState('No products match.') : list.map((p) => {
     const low = p.track_stock && p.stock_qty <= p.reorder_level;
-    const stock = p.track_stock ? `${p.stock_qty} in stock` : (p.print_color_mode ? (p.print_color_mode === 'color' ? 'Colour print' : 'B&W print') : 'Service');
+    const stock = p.track_stock ? `${p.stock_qty} in stock` : (p.print_color_mode ? printServiceLabel(p) : 'Service');
     return `<button type="button" class="tile" data-id="${p.id}">
       <span class="t-name">${escapeHtml(p.name)}</span>
       <span class="t-meta"><span class="t-price">${escapeHtml(cur(p.price))}</span><span class="t-stock${low ? ' low' : ''}">${escapeHtml(stock)}</span></span>
@@ -555,7 +566,7 @@ function renderCatalog() {
 
 function addToCart(product) {
   if (!product) return;
-  const line = cart.find((l) => l.product_id === product.id && l.unit_price === product.price && !l.session_id);
+  const line = cart.find((l) => l.product_id === product.id && l.unit_price === product.price && !l.session_id && !l.copy_id);
   if (line) line.qty = round2(line.qty + 1);
   else cart.push({ key: ++cartKey, product_id: product.id, name: product.name, unit_price: product.price, qty: 1 });
   renderCart();
@@ -565,28 +576,63 @@ function addToCart(product) {
 // Print sessions waiting at the till
 // ---------------------------------------------------------------
 let waitingSessions = [];
+let waitingCopies = [];
+
+// "B&W print", "Colour photocopy · both sides" ...
+function printServiceLabel(p) {
+  const what = `${p.print_color_mode === 'color' ? 'Colour' : 'B&W'} ${p.print_kind === 'copy' ? 'photocopy' : 'print'}`;
+  return p.print_sides === 2 ? `${what} · both sides, per sheet` : what;
+}
 
 async function loadWaitingSessions() {
-  try {
-    const { sessions } = await api('GET', '/api/print-sessions/open');
-    waitingSessions = sessions;
-  } catch (_) {
-    waitingSessions = [];
+  const [sessions, copies] = await Promise.all([
+    api('GET', '/api/print-sessions/open').then((r) => r.sessions).catch(() => []),
+    api('GET', '/api/copies/open').then((r) => r.copies).catch(() => [])
+  ]);
+  waitingSessions = sessions;
+  waitingCopies = copies;
+  renderWaitingSessions();
+}
+
+const COPY_CONFIDENCE = { high: 'Sure', medium: 'Likely', low: 'Unsure' };
+
+function copyWaitingRow(c) {
+  const canAdd = c.suggestion.lines.length > 0;
+  const colour = c.color_pages && !c.mono_pages && !c.unknown_pages ? 'colour' : c.unknown_pages ? 'colour not known' : c.color_pages ? `${c.color_pages} colour` : 'B&W';
+  return `<div class="waiting-row copy-row">
+    <div style="min-width:0;">
+      <div><span class="badge info">Photocopies</span> <strong>${escapeHtml(c.printer_name)}</strong> <span class="muted small">· ${escapeHtml(timeOf(c.started_at))}–${escapeHtml(timeOf(c.ended_at))}</span></div>
+      <div class="muted small">${plural(c.pages, c.unit === 'sheets' ? 'sheet' : 'page')} · ${escapeHtml(colour)} · ${escapeHtml(COPY_CONFIDENCE[c.confidence])}: no print job behind it</div>
+      ${canAdd ? '' : '<div class="small" style="color:var(--warn-ink);">No photocopy or print product matches. Set "Print service" on a product.</div>'}
+    </div>
+    <button type="button" class="btn btn-outline btn-sm" data-add-copy="${c.id}" ${canAdd ? '' : 'disabled'}>Add to sale</button>
+  </div>`;
+}
+
+function addCopyToCart(copyId) {
+  const c = waitingCopies.find((x) => x.id === copyId);
+  if (!c || cartCopies.has(copyId)) return;
+  for (const line of c.suggestion.lines) {
+    cart.push({ key: ++cartKey, product_id: line.product_id, name: line.name, unit_price: line.unit_price, qty: line.qty, copy_id: copyId });
   }
+  cartCopies.set(copyId, `${c.printer_name} · ${plural(c.pages, 'page')}`);
+  if (c.unknown_pages) toast('The printer can\'t tell colour from B&W copies. Added as B&W: change the line if they were colour.');
+  renderCart();
   renderWaitingSessions();
 }
 
 function renderWaitingSessions() {
   const list = waitingSessions.filter((s) => !cartSessions.has(s.id));
-  $('waiting-sessions').hidden = list.length === 0;
-  $('waiting-list').innerHTML = list.map((s) => {
+  const copies = waitingCopies.filter((c) => !cartCopies.has(c.id));
+  $('waiting-sessions').hidden = list.length === 0 && copies.length === 0;
+  $('waiting-list').innerHTML = copies.map(copyWaitingRow).join('') + list.map((s) => {
     const pages = s.color_pages + s.mono_pages + s.unknown_pages;
     const alerts = s.flags.filter((f) => ['burst', 'concurrent', 'partial', 'reprint'].includes(f.type));
     const canAdd = s.suggestion.lines.length > 0;
     return `<div class="waiting-row">
       <div style="min-width:0;">
         <div><strong>${escapeHtml(s.owner || 'Unknown user')}</strong>${s.machine ? ` <span class="muted">on ${escapeHtml(s.machine)}</span>` : ''} <span class="muted small">· ${escapeHtml(timeOf(s.ended_at))}</span></div>
-        <div class="muted small">${plural(s.job_count, 'job')} · ${plural(pages, 'page')} (${s.color_pages} colour, ${s.mono_pages} B&amp;W${s.unknown_pages ? `, ${s.unknown_pages} unknown` : ''})</div>
+        <div class="muted small">${plural(s.job_count, 'job')} · ${plural(pages, 'page')} (${s.color_pages} colour, ${s.mono_pages} B&amp;W${s.unknown_pages ? `, ${s.unknown_pages} unknown` : ''})${s.jobs.some((j) => j.duplex === 'duplex') ? ' · printed on both sides' : ''}</div>
         ${alerts.length ? `<div class="alert-chips" style="margin-top:6px;">${sessionAlerts(alerts)}</div>` : ''}
         ${canAdd ? '' : '<div class="small" style="color:var(--warn-ink);">No print-service products match. Set "Print service" on your print products.</div>'}
       </div>
@@ -613,13 +659,19 @@ function addSessionToCart(sessionId) {
 function renderCartSessions() {
   $('cart-sessions').innerHTML = [...cartSessions.entries()].map(([id, label]) => `
     <span class="alert-chip info">Billing print session: ${escapeHtml(label)}
-      <button type="button" class="chip-remove" data-remove-session="${id}" aria-label="Remove print session ${escapeHtml(label)} from this sale">&times;</button></span>`).join('');
+      <button type="button" class="chip-remove" data-remove-session="${id}" aria-label="Remove print session ${escapeHtml(label)} from this sale">&times;</button></span>`).join('') +
+    [...cartCopies.entries()].map(([id, label]) => `
+    <span class="alert-chip info">Billing photocopies: ${escapeHtml(label)}
+      <button type="button" class="chip-remove" data-remove-copy="${id}" aria-label="Remove photocopies ${escapeHtml(label)} from this sale">&times;</button></span>`).join('');
 }
 
 function renderCart() {
   // A print session whose lines were all removed is no longer billed by this sale.
   for (const id of [...cartSessions.keys()]) {
     if (!cart.some((l) => l.session_id === id)) cartSessions.delete(id);
+  }
+  for (const id of [...cartCopies.keys()]) {
+    if (!cart.some((l) => l.copy_id === id)) cartCopies.delete(id);
   }
   renderCartSessions();
   const wrap = $('cart-lines');
@@ -723,6 +775,7 @@ function renderTotals() {
 function resetSale() {
   cart = [];
   cartSessions.clear();
+  cartCopies.clear();
   $('customer-name').value = '';
   $('customer-phone').value = '';
   $('discount-value').value = 0;
@@ -754,7 +807,8 @@ async function completeSale() {
     discount_value: parseFloat($('discount-value').value) || 0,
     payment_method: payMethod,
     amount_tendered: payMethod === 'cash' && tenderedRaw !== '' ? parseFloat(tenderedRaw) : null,
-    print_session_ids: [...cartSessions.keys()]
+    print_session_ids: [...cartSessions.keys()],
+    copy_event_ids: [...cartCopies.keys()]
   };
 
   const btn = $('complete-sale-btn');
@@ -1016,7 +1070,7 @@ let sessionList = [];
 
 function setupPrintMonitor() {
   $('summary-date').value = localDateString();
-  const reload = () => Promise.all([loadPrintSummary(), loadSessions()]).catch((err) => toast(err.message, true));
+  const reload = () => Promise.all([loadPrintSummary(), loadSessions(), loadCopies()]).catch((err) => toast(err.message, true));
   $('summary-date').addEventListener('change', reload);
   $('session-filter').addEventListener('change', () => loadSessions().catch((err) => toast(err.message, true)));
 
@@ -1042,6 +1096,27 @@ function setupPrintMonitor() {
         }
       });
     }
+  });
+
+  $('copies-wrap').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-copy-act]');
+    if (!b) return;
+    const id = Number(b.dataset.id);
+    if (b.dataset.copyAct === 'restore') {
+      try { await api('PATCH', `/api/copies/${id}/restore`); await loadCopies(); } catch (err) { toast(err.message, true); }
+      return;
+    }
+    openModal({
+      title: 'Not a sale',
+      body: `<p class="muted" style="margin:0;">The run stays on record but no longer counts as printed-but-not-sold.</p>
+        <div class="field"><label for="copy-note">Reason</label>
+          <select id="copy-note"><option>Shop's own copies</option><option>Printer report / test page</option><option>Fax received</option><option>Reprint after a jam</option><option>Other</option></select></div>`,
+      submitLabel: 'Dismiss',
+      onSubmit: async (form) => {
+        await api('PATCH', `/api/copies/${id}/dismiss`, { note: form.querySelector('#copy-note').value });
+        await loadCopies();
+      }
+    });
   });
 
   $('agent-register-btn').addEventListener('click', () => {
@@ -1202,6 +1277,48 @@ async function loadSessions() {
     : sessions.map(sessionCard).join('');
 }
 
+// ---------------------------------------------------------------
+// Photocopies found on the printers' page counters
+// ---------------------------------------------------------------
+const COPY_EVIDENCE = {
+  copy_counter: "printer's own copy counter",
+  printing_without_job: 'printer busy with no print job',
+  sustained: 'went on for several minutes',
+  spooled_pages_missing_nearby: 'a print job went missing nearby: may be a late print',
+  single_page: 'single page: may be a report page',
+  other_pc_jobs: 'part of it was printing from another PC'
+};
+const COPY_BADGE = { high: '<span class="badge ok">Sure</span>', medium: '<span class="badge">Likely</span>', low: '<span class="badge warn">Unsure</span>' };
+
+async function loadCopies() {
+  const date = $('summary-date').value || localDateString();
+  const { copies } = await api('GET', `/api/copies?date=${encodeURIComponent(date)}`);
+  const counted = copies.filter((c) => c.status === 'open' || c.status === 'billed');
+  const pages = counted.reduce((n, c) => n + c.pages, 0);
+  const open = counted.filter((c) => c.status === 'open' && c.pages > 0);
+  $('copies-total').textContent = copies.length ? `${plural(pages, 'page')} · ${open.length} not billed` : '';
+  $('copies-wrap').innerHTML = copies.length === 0
+    ? '<p class="muted" style="margin:0;">No photocopies detected this day.</p>'
+    : copies.map((c) => {
+      const colour = c.color_pages && !c.mono_pages && !c.unknown_pages ? 'colour' : c.unknown_pages ? 'colour unknown' : c.color_pages ? `${c.color_pages} colour` : 'B&W';
+      const evidence = c.evidence.map((x) => COPY_EVIDENCE[x]).filter(Boolean).join(' · ');
+      let state = '';
+      if (c.status === 'open') state = `<button type="button" class="btn btn-ghost btn-sm" data-copy-act="dismiss" data-id="${c.id}">Not a sale</button>`;
+      if (c.status === 'billed') state = `<span class="badge ok">Billed${c.receipt_no ? ` · ${escapeHtml(c.receipt_no)}` : ''}</span>`;
+      if (c.status === 'dismissed') state = `<span class="badge">${escapeHtml(c.note || 'Dismissed')}</span> <button type="button" class="btn btn-ghost btn-sm" data-copy-act="restore" data-id="${c.id}">Restore</button>`;
+      if (c.status === 'duplicate') state = '<span class="badge">Same run as another agent</span>';
+      return `<div class="copy-item${c.status === 'dismissed' || c.status === 'duplicate' ? ' is-muted' : ''}">
+        <div class="spread" style="gap:8px;">
+          <div><strong>${plural(c.pages, c.unit === 'sheets' ? 'sheet' : 'page')}</strong> <span class="muted">· ${escapeHtml(colour)}</span></div>
+          ${COPY_BADGE[c.confidence] || ''}
+        </div>
+        <div class="muted small">${escapeHtml(c.printer_name)} · ${escapeHtml(timeOf(c.started_at))}–${escapeHtml(timeOf(c.ended_at))}${c.detected_pages !== c.pages ? ` · ${c.detected_pages} on the counter` : ''}</div>
+        ${evidence ? `<div class="muted small">${escapeHtml(evidence)}</div>` : ''}
+        <div class="row" style="gap:6px; margin-top:6px;">${state}</div>
+      </div>`;
+    }).join('');
+}
+
 function colorBadge(mode) {
   if (mode === 'color') return '<span class="badge info">Colour</span>';
   if (mode === 'mono') return '<span class="badge">B&amp;W</span>';
@@ -1263,8 +1380,8 @@ async function loadReconcile() {
   wireGoLinks($('rec-setup'));
 
   $('rec-kpis').innerHTML = [
-    { label: 'Pages printed', value: t.color_printed + t.mono_printed, sub: `${t.color_printed} colour · ${t.mono_printed} B&W${t.unknown_printed ? ` · ${t.unknown_printed} unknown` : ''}` },
-    { label: 'Pages sold', value: round2(t.color_sold + t.mono_sold), sub: `${round2(t.color_sold)} colour · ${round2(t.mono_sold)} B&W` },
+    { label: 'Pages printed', value: t.color_printed + t.mono_printed, sub: `${t.color_printed} colour · ${t.mono_printed} B&W${t.unknown_printed ? ` · ${t.unknown_printed} unknown` : ''}${t.copy_pages ? ` · ${t.copy_pages} photocopied` : ''}` },
+    { label: 'Pages sold', value: round2(t.color_sold + t.mono_sold), sub: `${round2(t.color_sold)} colour · ${round2(t.mono_sold)} B&W${t.copy_sold ? ` · ${round2(t.copy_sold)} as photocopies` : ''}${t.two_sided_sold ? ` · ${round2(t.two_sided_sold)} two-sided` : ''}` },
     { label: 'Gap', value: plural(round2(t.gap), 'page'), sub: `${t.gap > 0 ? 'Printed but not sold' : 'Nothing unaccounted for'} · ${data.sessions.billed} of ${plural(data.sessions.total, 'client session')} billed` },
     { label: 'Est. unbilled value', value: cur(t.estimated_value), sub: `At ${cur(data.prices.color)} colour / ${cur(data.prices.mono)} B&W per page` }
   ].map(kpiCard).join('');
@@ -1276,13 +1393,14 @@ async function loadReconcile() {
 
   $('rec-table').innerHTML = data.rows.length === 0 ? emptyState('No printing or print-service sales in this range.') : `
     <table>
-      <thead><tr><th>Day</th><th class="num">Colour printed</th><th class="num">Colour sold</th><th class="num">B&amp;W printed</th><th class="num">B&amp;W sold</th><th class="num">Unknown</th><th class="num">Gap</th><th class="num">Est. value</th></tr></thead>
+      <thead><tr><th>Day</th><th class="num">Colour printed</th><th class="num">Colour sold</th><th class="num">B&amp;W printed</th><th class="num">B&amp;W sold</th><th class="num">Unknown</th><th class="num">Photocopied</th><th class="num">Gap</th><th class="num">Est. value</th></tr></thead>
       <tbody>${data.rows.map((r) => `
         <tr>
           <td>${escapeHtml(dayLabel(r.day))}</td>
           <td class="num">${r.color_printed}</td><td class="num">${round2(r.color_sold)}</td>
           <td class="num">${r.mono_printed}</td><td class="num">${round2(r.mono_sold)}</td>
           <td class="num">${r.unknown_printed || '<span class="muted">0</span>'}</td>
+          <td class="num">${r.copy_pages ? `${r.copy_pages}<div class="muted small">${round2(r.copy_sold)} sold as copies</div>` : '<span class="muted">0</span>'}</td>
           <td class="num">${r.no_data ? '<span class="badge" title="Print services were sold but no agent reported any printing this day">No print data</span>' : `<span class="badge ${r.gap > 0 ? 'warn' : r.gap < 0 ? '' : 'ok'}">${r.gap === 0 ? 'Balanced' : `${r.gap > 0 ? '+' : ''}${round2(r.gap)} pages`}</span>`}</td>
           <td class="num">${!r.no_data && r.estimated_value ? escapeHtml(cur(r.estimated_value)) : '<span class="muted">&mdash;</span>'}</td>
         </tr>`).join('')}
@@ -1306,6 +1424,15 @@ function renderAudit(audit) {
   $('audit-missing').innerHTML = audit.missing.length === 0
     ? '<p class="muted" style="margin:0;">Every print session in this range is linked to or matched with a sale.</p>'
     : `<div class="callout" style="margin-bottom:6px;"><strong>${plural(audit.missing_count, 'session')} · about ${escapeHtml(cur(audit.missing_value))} unbilled</strong></div>${audit.missing.map((s) => auditRow(s)).join('')}`;
+  $('audit-copies').innerHTML = audit.copies.length === 0 ? '' : `
+    <div class="callout" style="margin:10px 0 6px;"><strong>${plural(audit.copies_count, 'photocopy run')} · about ${escapeHtml(cur(audit.copies_value))} unbilled</strong></div>
+    ${audit.copies.map((c) => `<div class="list-row">
+      <div style="min-width:0;">
+        <div><span class="badge info">Photocopies</span> <strong>${escapeHtml(c.printer_name)}</strong></div>
+        <div class="muted small">${escapeHtml(formatDbDate(c.started_at))} · ${plural(c.pages, 'page')}${c.unknown_pages ? ' (colour unknown, valued as B&amp;W)' : ''} · ${c.confidence === 'high' ? 'sure' : 'likely'}</div>
+      </div>
+      <span class="mono" style="white-space:nowrap;">${escapeHtml(cur(c.value))}</span>
+    </div>`).join('')}`;
   $('audit-likely').innerHTML = audit.likely.length === 0
     ? '<p class="muted" style="margin:0;">No hand-rung sales to pair with.</p>'
     : audit.likely.map((s) => auditRow(s, `<div class="row" style="gap:6px; margin-top:6px;">
@@ -1623,7 +1750,7 @@ function renderProducts() {
           <td><div style="font-weight:600;">${escapeHtml(p.name)}</div>${p.sku ? `<div class="muted small mono">${escapeHtml(p.sku)}</div>` : ''}</td>
           <td>${p.category ? escapeHtml(p.category) : '<span class="muted">&mdash;</span>'}</td>
           <td class="num">${escapeHtml(cur(p.price))}</td>
-          <td>${p.print_color_mode === 'color' ? '<span class="badge info">Colour</span>' : p.print_color_mode === 'mono' ? '<span class="badge">B&amp;W</span>' : '<span class="muted">&mdash;</span>'}</td>
+          <td>${p.print_color_mode ? `<div class="row" style="gap:4px;">${p.print_color_mode === 'color' ? '<span class="badge info">Colour</span>' : '<span class="badge">B&amp;W</span>'}${p.print_kind === 'copy' ? '<span class="badge">Photocopy</span>' : ''}${p.print_sides === 2 ? '<span class="badge">Both sides</span>' : ''}</div>` : '<span class="muted">&mdash;</span>'}</td>
           <td class="num">${p.track_stock ? `<span class="${low ? 'badge warn' : ''}">${p.stock_qty}</span>` : '<span class="muted">Not tracked</span>'}</td>
           <td>${outlookCell(p)}</td>
           <td>${statusBadge(p.active, 'Active', 'Inactive')}</td>
@@ -1641,7 +1768,9 @@ function renderProducts() {
 
 function openProductModal(p) {
   const editing = !!p;
-  const v = p || { name: '', sku: '', category: '', price: '', track_stock: 1, stock_qty: 0, reorder_level: 5, print_color_mode: null };
+  const v = p || { name: '', sku: '', category: '', price: '', track_stock: 1, stock_qty: 0, reorder_level: 5, print_color_mode: null, print_kind: 'print', print_sides: 1 };
+  const service = v.print_color_mode ? `${v.print_color_mode}|${v.print_kind || 'print'}` : '';
+  const opt = (value, label) => `<option value="${value}"${service === value ? ' selected' : ''}>${label}</option>`;
   const cats = Array.from(new Set(productList.map((x) => x.category).filter(Boolean))).sort();
   openModal({
     title: editing ? `Edit ${p.name}` : 'Add product',
@@ -1656,9 +1785,17 @@ function openProductModal(p) {
         <div class="field"><label for="pm-print">Print service</label>
           <select id="pm-print">
             <option value="">Not a print service</option>
-            <option value="mono"${v.print_color_mode === 'mono' ? ' selected' : ''}>B&amp;W print (1 qty = 1 page)</option>
-            <option value="color"${v.print_color_mode === 'color' ? ' selected' : ''}>Colour print (1 qty = 1 page)</option>
+            ${opt('mono|print', 'B&amp;W print')}
+            ${opt('color|print', 'Colour print')}
+            ${opt('mono|copy', 'B&amp;W photocopy')}
+            ${opt('color|copy', 'Colour photocopy')}
           </select></div>
+        <div class="field" data-print><label for="pm-sides">Sides</label>
+          <select id="pm-sides">
+            <option value="1"${v.print_sides === 2 ? '' : ' selected'}>One side, per page</option>
+            <option value="2"${v.print_sides === 2 ? ' selected' : ''}>Both sides, per sheet</option>
+          </select>
+          <span class="muted small">Both sides: 1 qty = 1 sheet, counted as 2 pages.</span></div>
         <label class="check full"><input type="checkbox" id="pm-track"${v.track_stock ? ' checked' : ''}> Track stock for this product</label>
         <div class="field" data-stock><label for="pm-stock">Stock on hand</label><input id="pm-stock" type="number" step="any" value="${v.stock_qty}"></div>
         <div class="field" data-stock><label for="pm-reorder">Low-stock alert level</label><input id="pm-reorder" type="number" step="any" min="0" value="${v.reorder_level}"></div>
@@ -1666,8 +1803,17 @@ function openProductModal(p) {
       ${editing ? '<p class="muted small" style="margin:0;">Changing stock on hand here is logged in the product\'s stock history.</p>' : ''}`,
     onOpen: (form) => {
       const track = form.querySelector('#pm-track');
-      const sync = () => form.querySelectorAll('[data-stock]').forEach((el) => { el.hidden = !track.checked; });
+      const print = form.querySelector('#pm-print');
+      const sync = () => {
+        form.querySelectorAll('[data-stock]').forEach((el) => { el.hidden = !track.checked; });
+        form.querySelectorAll('[data-print]').forEach((el) => { el.hidden = !print.value; });
+      };
       track.addEventListener('change', sync);
+      print.addEventListener('change', () => {
+        // Print services are sold by the page, not from stock.
+        if (print.value && !editing) track.checked = false;
+        sync();
+      });
       sync();
     },
     onSubmit: async (form) => {
@@ -1678,7 +1824,9 @@ function openProductModal(p) {
         cost_price: val('#pm-cost') === '' ? null : parseFloat(val('#pm-cost')),
         sku: val('#pm-sku').trim(),
         category: val('#pm-category').trim(),
-        print_color_mode: val('#pm-print') || null,
+        print_color_mode: val('#pm-print') ? val('#pm-print').split('|')[0] : null,
+        print_kind: val('#pm-print') ? val('#pm-print').split('|')[1] : 'print',
+        print_sides: val('#pm-print') ? Number(val('#pm-sides')) : 1,
         track_stock: form.querySelector('#pm-track').checked,
         stock_qty: parseFloat(val('#pm-stock')) || 0,
         reorder_level: val('#pm-reorder') === '' ? 5 : parseFloat(val('#pm-reorder'))

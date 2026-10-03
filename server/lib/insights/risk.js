@@ -221,8 +221,26 @@ function devicePageGaps() {
     type: 'device_gap',
     severity: p.device_gap.gap >= 100 ? 'high' : 'medium',
     title: `${p.printer}: ${p.device_gap.gap} pages not seen by the agent`,
-    detail: `The printer's own counter went up by ${p.device_gap.device_pages} pages in the last 24 hours, but print jobs account for ${p.device_gap.reported_pages}. The difference is usually photocopies or printing that bypassed this PC.`,
+    detail: `The printer's own counter went up by ${p.device_gap.device_pages} pages in the last 24 hours, but print jobs account for ${p.device_gap.reported_pages}${p.device_gap.copy_pages ? ` and detected photocopies for ${p.device_gap.copy_pages}` : ''}. The rest was printed while the agent wasn't watching (agent stopped, PC off) or from a PC without an agent.`,
     metric: p.device_gap
+  }));
+}
+
+// Photocopy runs (confidently detected) still not rung up a few hours later.
+function unbilledCopyRuns(today) {
+  const rows = db.prepare(`
+    SELECT printer_name, COUNT(*) AS runs, SUM(pages) AS pages FROM copy_events
+    WHERE status = 'open' AND confidence != 'low' AND pages > 0
+      AND substr(started_at, 1, 10) BETWEEN ? AND ?
+      AND julianday(ended_at) < julianday('now', '-2 hours')
+    GROUP BY printer_name
+  `).all(addDays(today, -6), today);
+  return rows.map((r) => ({
+    type: 'unbilled_copies',
+    severity: r.pages >= 50 ? 'high' : 'medium',
+    title: `${r.printer_name}: ${r.pages} photocopied page${r.pages === 1 ? '' : 's'} not billed`,
+    detail: `${r.runs} photocopy run${r.runs === 1 ? '' : 's'} in the last 7 days came off this printer's page counter with no print job behind ${r.runs === 1 ? 'it' : 'them'}, and no sale bills ${r.runs === 1 ? 'it' : 'them'}. Bill, link or dismiss them in Print monitor > Photocopies.`,
+    metric: r
   }));
 }
 
@@ -236,7 +254,8 @@ function riskAlerts(reconcile, now = new Date()) {
     ...cashDrawerAlerts(),
     ...lateVoids(since),
     ...offHoursPrinting(since),
-    ...devicePageGaps()
+    ...devicePageGaps(),
+    ...unbilledCopyRuns(today)
   ];
   const rank = { high: 0, medium: 1 };
   alerts.sort((a, b) => rank[a.severity] - rank[b.severity]);

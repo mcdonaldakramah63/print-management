@@ -12,7 +12,7 @@ const router = express.Router();
 router.post('/', requireAuth, (req, res) => {
   const {
     customer_name, customer_phone, items, discount_type, discount_value,
-    payment_method, amount_tendered, print_session_ids
+    payment_method, amount_tendered, print_session_ids, copy_event_ids
   } = req.body;
 
   try {
@@ -25,7 +25,8 @@ router.post('/', requireAuth, (req, res) => {
       discountValue: discount_value,
       paymentMethod: payment_method,
       amountTendered: amount_tendered,
-      printSessionIds: print_session_ids
+      printSessionIds: print_session_ids,
+      copyEventIds: copy_event_ids
     });
     res.status(201).json(result);
   } catch (err) {
@@ -136,6 +137,7 @@ router.patch('/:id/void', requireAdmin, (req, res) => {
     db.prepare(`UPDATE sales SET voided = 1, voided_at = datetime('now'), voided_by = ? WHERE id = ?`).run(userId, sale.id);
     // Print sessions this sale billed become unbilled again so they can be re-rung.
     db.prepare('UPDATE print_sessions SET sale_id = NULL, billed_at = NULL WHERE sale_id = ?').run(sale.id);
+    db.prepare("UPDATE copy_events SET status = 'open', sale_id = NULL, billed_at = NULL WHERE sale_id = ?").run(sale.id);
     for (const item of items) {
       moveStock({ productId: item.product_id, delta: item.qty, reason: 'void', saleId: sale.id, userId });
     }

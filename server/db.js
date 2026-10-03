@@ -283,6 +283,46 @@ ensureColumn('print_jobs', 'session_id', 'session_id INTEGER REFERENCES print_se
 db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_session ON print_jobs(session_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_doc ON print_jobs(doc_key)');
 
+// Print services: photocopy vs print, and one- vs two-sided. A two-sided
+// service is sold per sheet; each sheet counts as 2 pages when printed is
+// compared with sold.
+ensureColumn('products', 'print_kind', "print_kind TEXT NOT NULL DEFAULT 'print' CHECK (print_kind IN ('print','copy'))");
+ensureColumn('products', 'print_sides', 'print_sides INTEGER NOT NULL DEFAULT 1 CHECK (print_sides IN (1,2))');
+
+// Photocopies (walk-up output) detected by the agents from the printer's
+// page counter; see agent/copyMonitor.js.
+db.exec(`
+CREATE TABLE IF NOT EXISTS copy_events (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id       INTEGER NOT NULL REFERENCES agents(id),
+  event_key      TEXT NOT NULL,
+  printer_name   TEXT NOT NULL,
+  address        TEXT NOT NULL DEFAULT '',
+  started_at     TEXT NOT NULL,
+  ended_at       TEXT NOT NULL,
+  detected_pages INTEGER NOT NULL,
+  pages          INTEGER NOT NULL,
+  color_pages    INTEGER NOT NULL DEFAULT 0,
+  mono_pages     INTEGER NOT NULL DEFAULT 0,
+  unknown_pages  INTEGER NOT NULL DEFAULT 0,
+  unit           TEXT NOT NULL DEFAULT 'impressions',
+  source         TEXT NOT NULL DEFAULT 'counter_gap',
+  confidence     TEXT NOT NULL DEFAULT 'medium' CHECK (confidence IN ('high','medium','low')),
+  evidence       TEXT NOT NULL DEFAULT '[]',
+  status         TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','billed','dismissed','duplicate')),
+  duplicate_of   INTEGER REFERENCES copy_events(id),
+  sale_id        INTEGER REFERENCES sales(id),
+  billed_at      TEXT,
+  note           TEXT NOT NULL DEFAULT '',
+  reviewed_by    INTEGER REFERENCES users(id),
+  reviewed_at    TEXT,
+  received_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (agent_id, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_copy_events_started ON copy_events(started_at);
+CREATE INDEX IF NOT EXISTS idx_copy_events_address ON copy_events(address, started_at);
+`);
+
 // ---------- Seed default settings row ----------
 const settingsExists = db.prepare('SELECT 1 FROM settings WHERE id = 1').get();
 if (!settingsExists) {

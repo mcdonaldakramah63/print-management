@@ -8,7 +8,7 @@
     "dev": "node server/server.js",
     "build:exe": "node scripts/build-exe.js --target win-x64",
     "build:exe:linux": "node scripts/build-exe.js --target linux-x64",
-    "test:agent": "node agent/test/snmp.test.js"
+    "test:agent": "node agent/test/snmp.test.js && node agent/test/copyMonitor.test.js"
   },
   "engines": {
     "node": ">=18"

@@ -73,6 +73,46 @@ SNMP must be enabled on the printer (it usually is, with community
 report levels; the app then estimates toner from pages printed. Set
 `"readSupplies": false` to turn this off.
 
+## Photocopies
+
+A photocopy never reaches the Windows print spooler, but it does turn the
+printer's own page counter. Every minute the agent reads that counter
+(SNMP, same printers and settings as toner levels above) and checks each
+page it went up by against the print jobs this PC sent to that printer:
+
+- Each spooled job is owed by the counter (pages × copies, or sheets if the
+  printer counts sheets), from just before it was submitted until 15 minutes
+  after the spooler finished it, since printers buffer and print late.
+- Growth no job explains, after a 5-minute grace period and while no job is
+  still spooling, is walk-up output. Back-to-back minutes are joined into one
+  **photocopy run**, which is sent to the app.
+- Each run gets a confidence: **sure** (the printer said "printing" with no
+  job owed, or the run went on for several minutes), **likely** (a short
+  run), or **unsure** (a single page, often a printer report or a received
+  fax, or a print job went missing nearby and may simply have come out late).
+- Black-only printers make B&W copies. On colour printers the counter can't
+  tell colour from B&W, so copies are suggested as B&W at the till.
+
+Runs show at the till under **Print jobs and photocopies waiting to be
+billed**, in **Print monitor → Photocopies** (where an admin can mark one
+"Not a sale") and in **Printed vs sold**.
+
+When several PCs print to the same network printer, run an agent on each.
+The app recognises the printer by its IP address: pages another PC printed
+are taken off a run, and the same run reported by two agents is counted
+once. A PC printing to it **without** an agent will look like photocopies.
+
+Settings in `config.json`:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `detectCopies` | `true` | Turn photocopy detection off with `false`. |
+| `copyPollSeconds` | `60` | How often the page counter is read (minimum 15). |
+| `copyCounterOids` | `{}` | Optional, per printer: the vendor's own copy counters, for exact counts (and a colour split). E.g. `{ "Office MFP": { "total": "1.3.6.1.4.1.…", "color": "1.3.6.1.4.1.…" } }`. Find the OIDs in your printer's MIB documentation. |
+
+Pages printed while the agent isn't running can't be told apart from
+copies, so the agent starts counting afresh each time it starts.
+
 ## Optional: counting the whole document's pages
 
 Windows only tells the agent how many pages were *printed*, not how long the

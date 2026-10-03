@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 const { requireAgent } = require('../middleware/agentAuth');
 const analysis = require('../lib/printAnalysis');
+const { ingestCopyEvents } = require('../lib/copies');
 
 const router = express.Router();
 
@@ -160,6 +161,11 @@ router.post('/supplies', requireAgent, (req, res) => {
     db.prepare("DELETE FROM device_counters WHERE read_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-180 days')").run();
   })();
   res.json({ ok: true, stored });
+});
+
+// Photocopy runs the agent found on a printer's page counter.
+router.post('/copies', requireAgent, (req, res) => {
+  res.json({ ok: true, ...ingestCopyEvents(req.agent.id, req.body.events) });
 });
 
 // ---------------------------------------------------------------

@@ -9,6 +9,9 @@
   "supplyPollMinutes": 15,
   "snmpCommunity": "public",
   "printerAddresses": {},
+  "detectCopies": true,
+  "copyPollSeconds": 60,
+  "copyCounterOids": {},
   "printerColorOverride": {
     "HP LaserJet 500 MFP M525": "mono"
   },

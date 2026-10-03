@@ -194,7 +194,8 @@ Print monitoring (on each PC that has a printer)
    rename the example to config.json, set "backendUrl" (the address above)
    and "agentApiKey".
 3. Run PrintMonitorAgent.exe (or add it to Task Scheduler "At log on").
-   Network printers with SNMP enabled also report their toner levels.
+   Network printers with SNMP enabled also report their toner levels and
+   photocopies (from the printer's own page counter).
 `;
 
 function checkNode() {

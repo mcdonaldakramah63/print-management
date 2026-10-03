@@ -17,7 +17,8 @@
 const { spawn } = require('child_process');
 const readline = require('readline');
 const { countDocumentPages } = require('./docPages');
-const { createSupplyPoller } = require('./printerSupplies');
+const { createSupplyPoller, discoverPrinterAddresses } = require('./printerSupplies');
+const { createCopyMonitor } = require('./copyMonitor');
 const fs = require('fs');
 const path = require('path');
 
@@ -30,6 +31,7 @@ const STANDALONE = isSea();
 const BASE_DIR = STANDALONE ? path.dirname(process.execPath) : __dirname;
 const CONFIG_PATH = process.env.AGENT_CONFIG || path.join(BASE_DIR, 'config.json');
 const QUEUE_PATH = path.join(BASE_DIR, 'queue.json');
+const COPY_QUEUE_PATH = path.join(BASE_DIR, 'copies-queue.json');
 
 function embeddedWatcherScript() {
   const dir = path.join(require('os').tmpdir(), 'receipt-print-agent');
@@ -224,11 +226,20 @@ function startWatcher() {
   rl.on('line', (rawLine) => {
     const line = rawLine.trim();
     if (!line || !line.startsWith('{')) return; // skip Write-Host status lines
+    let parsed;
     try {
-      enqueue(applyDocumentPages(applyDuplexAssumption(applyColorOverride(JSON.parse(line)))));
+      parsed = JSON.parse(line);
     } catch {
       log(`Could not parse watcher output as JSON: ${line}`);
+      return;
     }
+    if (parsed.event === 'spooling') {
+      copyMonitor.jobSpooling(parsed);
+      return;
+    }
+    const job = applyDocumentPages(applyDuplexAssumption(applyColorOverride(parsed)));
+    copyMonitor.jobPrinted(job);
+    enqueue(job);
   });
 
   ps.stderr.on('data', (data) => log(`[watcher stderr] ${data.toString().trim()}`));
@@ -248,6 +259,10 @@ function startWatcher() {
 process.on('SIGINT', () => { log('Shutting down.'); process.exit(0); });
 process.on('SIGTERM', () => { log('Shutting down.'); process.exit(0); });
 
+// Photocopies: the printer's own page counter vs the jobs spooled to it.
+const copyMonitor = createCopyMonitor({ config, postJson, log, queuePath: COPY_QUEUE_PATH, discover: discoverPrinterAddresses });
+
+copyMonitor.start().catch((err) => log(`Photocopy detection could not start: ${err.message}`));
 startWatcher();
 setInterval(flushQueue, flushIntervalMs);
 setInterval(heartbeat, heartbeatIntervalMs);

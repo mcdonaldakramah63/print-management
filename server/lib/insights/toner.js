@@ -193,12 +193,19 @@ function deviceGap(printer) {
     WHERE printer_name = ? AND julianday(COALESCE(completed_at, submitted_at)) > julianday(?)
       AND julianday(COALESCE(completed_at, submitted_at)) <= julianday(?)
   `).get(printer, first.read_at, last.read_at).pages;
-  const gap = device - jobs;
+  // Photocopies the agent already found on this counter aren't a gap.
+  const copies = db.prepare(`
+    SELECT COALESCE(SUM(detected_pages), 0) AS pages FROM copy_events
+    WHERE printer_name = ? AND status != 'duplicate'
+      AND julianday(ended_at) > julianday(?) AND julianday(started_at) <= julianday(?)
+  `).get(printer, first.read_at, last.read_at).pages;
+  const gap = device - jobs - copies;
   return {
     from: first.read_at,
     to: last.read_at,
     device_pages: device,
     reported_pages: jobs,
+    copy_pages: copies,
     gap,
     significant: gap > Math.max(10, device * 0.05)
   };

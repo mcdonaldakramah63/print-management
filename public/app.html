@@ -93,7 +93,7 @@
       <div class="checkout">
         <div class="stack" style="min-width:0;">
         <section class="card stack" id="waiting-sessions" aria-labelledby="h-waiting" hidden>
-          <div class="spread"><h2 id="h-waiting">Print jobs waiting to be billed</h2><button class="btn btn-ghost btn-sm" type="button" id="waiting-refresh">Refresh</button></div>
+          <div class="spread"><h2 id="h-waiting">Print jobs and photocopies waiting to be billed</h2><button class="btn btn-ghost btn-sm" type="button" id="waiting-refresh">Refresh</button></div>
           <div id="waiting-list"></div>
         </section>
         <section class="card stack" aria-label="Product catalog">
@@ -251,6 +251,11 @@
             <h2 style="margin-bottom:10px;">By printer</h2>
             <div id="summary-by-printer"></div>
           </div>
+          <div class="card stack" aria-labelledby="h-copies">
+            <div class="spread"><h2 id="h-copies">Photocopies</h2><span class="muted small" id="copies-total"></span></div>
+            <p class="muted small" style="margin:0;">Pages the printer's own counter went up by with no print job behind them: walk-up photocopies. Network printers only.</p>
+            <div id="copies-wrap"></div>
+          </div>
           <div class="card stack">
             <div class="spread"><h2>Printer supplies</h2></div>
             <p class="muted small" style="margin:0;">Paper is counted in sheets, toner in pages, since you last refilled. Run-out dates follow each printer's recent use.</p>
@@ -270,7 +275,7 @@
     <section class="view" id="view-reconcile" aria-labelledby="h-rec">
       <div class="page-head">
         <div><span class="eyebrow">Print shop</span><h1 id="h-rec">Printed vs sold</h1>
-          <p class="muted" style="margin:6px 0 0; max-width:720px;">Pages the print agents saw, compared with the quantity sold of products marked as colour or B&amp;W print services. A positive gap means more was printed than sold.</p></div>
+          <p class="muted" style="margin:6px 0 0; max-width:720px;">Pages the print agents saw (print jobs plus photocopies found on the printers' page counters), compared with the quantity sold of products marked as print or photocopy services. A positive gap means more was printed than sold.</p></div>
         <form class="page-actions" id="rec-filters">
           <div class="field"><label for="rec-from">From</label><input id="rec-from" type="date"></div>
           <div class="field"><label for="rec-to">To</label><input id="rec-to" type="date"></div>
@@ -281,8 +286,9 @@
       <div class="grid grid-4" id="rec-kpis"></div>
       <div class="grid grid-2">
         <div class="card stack">
-          <div><h2>No matching sale found</h2><p class="muted small" style="margin:4px 0 0;">Print sessions with no linked sale and no plausible hand-rung sale. These are the prints most likely never paid for.</p></div>
+          <div><h2>No matching sale found</h2><p class="muted small" style="margin:4px 0 0;">Print sessions with no linked sale and no plausible hand-rung sale, and photocopy runs nobody rang up. These are the pages most likely never paid for.</p></div>
           <div id="audit-missing"></div>
+          <div id="audit-copies"></div>
         </div>
         <div class="card stack">
           <div><h2>Probably rung up by hand</h2><p class="muted small" style="margin:4px 0 0;">Unlinked sessions paired with a sale by pages, time and customer name (optimal matching). Confirm to link them.</p></div>
@@ -290,7 +296,7 @@
         </div>
       </div>
       <div class="card"><div class="table-wrap" id="rec-table"></div>
-        <p class="muted small" style="margin:12px 0 0;">Colour detection depends on each printer's driver. Pages with an unknown colour mode are listed separately and not counted in the gap.</p></div>
+        <p class="muted small" style="margin:12px 0 0;">Colour detection depends on each printer's driver. Printed pages with an unknown colour mode are listed separately and not counted in the gap; photocopies of unknown colour count as B&amp;W. A two-sided service counts 2 pages per sheet sold, and the blank back of an odd-page document printed on both sides isn't counted as missing.</p></div>
     </section>
 
     <!-- ============ PRODUCTS (admin) ============ -->

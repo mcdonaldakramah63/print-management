@@ -195,8 +195,15 @@ const OID = {
   deviceDescr: '1.3.6.1.2.1.25.3.2.1.3.1',
   supplies: '1.3.6.1.2.1.43.11.1.1',      // prtMarkerSuppliesEntry
   colorants: '1.3.6.1.2.1.43.12.1.1.4',   // prtMarkerColorantValue
-  lifeCount: '1.3.6.1.2.1.43.10.2.1.4'    // prtMarkerLifeCount (pages)
+  lifeCount: '1.3.6.1.2.1.43.10.2.1.4',   // prtMarkerLifeCount (pages)
+  counterUnit: '1.3.6.1.2.1.43.10.2.1.3', // prtMarkerCounterUnit
+  printerStatus: '1.3.6.1.2.1.25.3.5.1.1' // hrPrinterStatus
 };
+
+// prtMarkerCounterUnit: what the life counter counts.
+const COUNTER_UNITS = { 7: 'impressions', 8: 'sheets' };
+// hrPrinterStatus values (RFC 2790).
+const PRINTER_STATUS = { 1: 'other', 2: 'unknown', 3: 'idle', 4: 'printing', 5: 'warmup' };
 
 // prtMarkerSuppliesType values (RFC 3805)
 const SUPPLY_TYPES = { 3: 'toner', 4: 'waste_toner', 5: 'ink', 6: 'ink', 7: 'waste_ink', 9: 'drum', 10: 'developer', 15: 'fuser', 20: 'transfer_unit', 21: 'toner', 32: 'staples' };
@@ -260,4 +267,53 @@ async function readPrinter(host, options = {}) {
   return { model: String(data.model).slice(0, 120), supplies, life_count: lifeCount };
 }
 
-module.exports = { SnmpSession, readPrinter, supplyPercent, buildRequest, parseResponse, encOid, decOid, OID, tlv, encInt };
+/**
+ * Quick read for frequent polling: the page counter (and what it counts),
+ * whether the printer is busy right now, which colorants it has, and any
+ * extra counters named in config (vendor copy counters).
+ */
+async function readCounters(host, options = {}, extraOids = []) {
+  const tryVersion = async (version) => {
+    const s = new SnmpSession(host, { ...options, version });
+    try {
+      const lifeRows = await s.walk(OID.lifeCount, 16);
+      if (lifeRows.length === 0) return null;
+      const unitRows = await s.walk(OID.counterUnit, 16).catch(() => []);
+      const statusRows = await s.walk(OID.printerStatus, 4).catch(() => []);
+      const extra = {};
+      for (const oid of extraOids) {
+        const v = await s.get(oid).catch(() => undefined);
+        if (Number.isFinite(v)) extra[oid] = v;
+      }
+      return { lifeRows, unitRows, statusRows, extra };
+    } finally {
+      s.close();
+    }
+  };
+  let data = null;
+  try { data = await tryVersion(options.version ?? 1); } catch { /* fall through */ }
+  if (!data && (options.version ?? 1) === 1) data = await tryVersion(0);
+  if (!data) throw new Error(`No page counter from ${host}`);
+  // Marker 1 is the print engine; take the largest counter if there are several.
+  const first = data.lifeRows.reduce((a, b) => (Number(b.value) > Number(a.value) ? b : a));
+  const suffix = first.oid.slice(OID.lifeCount.length);
+  const unitRow = data.unitRows.find((r) => r.oid.slice(OID.counterUnit.length) === suffix) || data.unitRows[0];
+  return {
+    life_count: Number(first.value),
+    unit: (unitRow && COUNTER_UNITS[Number(unitRow.value)]) || 'impressions',
+    status: data.statusRows.length ? PRINTER_STATUS[Number(data.statusRows[0].value)] || 'unknown' : 'unknown',
+    extra: data.extra
+  };
+}
+
+/** Colorant names the printer reports ("black", "cyan", ...). */
+async function readColorants(host, options = {}) {
+  const s = new SnmpSession(host, { ...options, version: options.version ?? 1 });
+  try {
+    return (await s.walk(OID.colorants, 32)).map((r) => String(r.value || '').toLowerCase()).filter(Boolean);
+  } finally {
+    s.close();
+  }
+}
+
+module.exports = { SnmpSession, readPrinter, readCounters, readColorants, supplyPercent, buildRequest, parseResponse, encOid, decOid, OID, tlv, encInt };

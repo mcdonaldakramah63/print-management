@@ -30,6 +30,7 @@ const printJobRoutes = require('./routes/printJobs');
 const reportRoutes = require('./routes/reports');
 const printSessionRoutes = require('./routes/printSessions');
 const insightRoutes = require('./routes/insights');
+const copyRoutes = require('./routes/copies');
 const { router: reconciliationRoutes } = require('./routes/reconciliation');
 
 const app = express();
@@ -74,6 +75,7 @@ app.use('/api/print-jobs', printJobRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/print-sessions', printSessionRoutes);
 app.use('/api/insights', insightRoutes);
+app.use('/api/copies', copyRoutes);
 app.use('/api/reconciliation', reconciliationRoutes);
 
 app.get('/', (req, res) => res.redirect('/login.html'));
