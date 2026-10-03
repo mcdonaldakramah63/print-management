@@ -1,0 +1,16 @@
+# Receipt System relay on Cloudflare Workers (free plan, no card needed).
+# Deployed by .github/workflows/relay-cloudflare.yml; see README.md.
+name = "receipt-relay"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# One Durable Object per shop: its link, the requests waiting on it and its
+# last encrypted snapshot. SQLite-backed objects are on the free plan.
+[[durable_objects.bindings]]
+name = "SHOPS"
+class_name = "ShopRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ShopRelay"]

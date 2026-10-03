@@ -1,0 +1,82 @@
+name: Cloudflare relay
+
+on:
+  push:
+    paths:
+      - 'relay-cloudflare/**'
+      - 'relay/test/**'
+      - 'server/lib/remoteLink.js'
+      - '.github/workflows/relay-cloudflare.yml'
+  workflow_dispatch:
+
+jobs:
+  # The Worker in workerd (Cloudflare's runtime) with a real shop server:
+  # the full relay end-to-end test over the WebSocket link.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - run: npm ci
+      - run: npm ci
+        working-directory: relay-cloudflare
+      - name: End-to-end test against the Worker
+        run: |
+          cd relay-cloudflare
+          printf 'RELAY_KEY=ci-relay-key\n' > .dev.vars
+          WRANGLER_SEND_METRICS=false npx wrangler dev --port 8799 --ip 127.0.0.1 > ../wrangler.log 2>&1 &
+          cd ..
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8799/healthz && break; sleep 1; done
+          RELAY_URL=http://127.0.0.1:8799 RELAY_KEY=ci-relay-key node relay/test/relay.test.js || { tail -50 wrangler.log; exit 1; }
+
+  # Deploys to your Cloudflare account when these repository secrets exist:
+  #   CLOUDFLARE_API_TOKEN   (template "Edit Cloudflare Workers")
+  #   CLOUDFLARE_ACCOUNT_ID
+  #   RELAY_KEY              (the key you enter on the shop PC)
+  # then runs the same end-to-end test against the live relay.
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      RELAY_KEY: ${{ secrets.RELAY_KEY }}
+    steps:
+      - name: Secrets present?
+        id: check
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$RELAY_KEY" ]; then
+            echo "::notice::Not deploying: add CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and RELAY_KEY as repository secrets (see relay-cloudflare/README.md)."
+            echo "go=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=yes" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.check.outputs.go == 'yes'
+        uses: actions/checkout@v4
+      - if: steps.check.outputs.go == 'yes'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - if: steps.check.outputs.go == 'yes'
+        run: npm ci && (cd relay-cloudflare && npm ci)
+      - name: Deploy the Worker
+        if: steps.check.outputs.go == 'yes'
+        id: deploy
+        working-directory: relay-cloudflare
+        run: |
+          set -o pipefail
+          WRANGLER_SEND_METRICS=false npx wrangler deploy 2>&1 | tee ../deploy.log
+          printf '%s' "$RELAY_KEY" | WRANGLER_SEND_METRICS=false npx wrangler secret put RELAY_KEY
+          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' ../deploy.log | head -1)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Relay address: $URL"
+          echo "### Relay address: $URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Enter it on the shop PC in Settings > Remote access and phone app, with your RELAY_KEY." >> "$GITHUB_STEP_SUMMARY"
+      - name: End-to-end test against the live relay
+        if: steps.check.outputs.go == 'yes'
+        run: |
+          URL="${{ steps.deploy.outputs.url }}"
+          for i in $(seq 1 30); do curl -sf "$URL/healthz" && break; sleep 2; done
+          RELAY_URL="$URL" node relay/test/relay.test.js

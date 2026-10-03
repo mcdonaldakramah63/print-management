@@ -386,9 +386,9 @@
 
       <section class="card stack" id="remote-card" style="max-width:820px;" aria-labelledby="h-remote">
         <div class="spread"><h2 id="h-remote">Remote access and phone app</h2><span class="remote-state" id="remote-state"></span></div>
-        <p class="muted small" style="margin:0;">Check sales, printers and alerts from anywhere, and use every admin page from the Receipt Admin Android app. This PC connects out to a relay you run (free on Render), so the router needs no changes. Only admins can sign in from outside the shop.</p>
+        <p class="muted small" style="margin:0;">Check sales, printers and alerts from anywhere, and use every admin page from the Receipt Admin Android app. This PC connects out to a relay you run (free on Cloudflare), so the router needs no changes. Only admins can sign in from outside the shop.</p>
         <form class="form-grid" id="remote-form" autocomplete="off">
-          <div class="field full"><label for="r-url">Relay address</label><input id="r-url" type="url" inputmode="url" placeholder="https://receipt-relay.onrender.com" spellcheck="false"></div>
+          <div class="field full"><label for="r-url">Relay address</label><input id="r-url" type="url" inputmode="url" placeholder="https://receipt-relay.yourname.workers.dev" spellcheck="false"></div>
           <div class="field"><label for="r-key">Relay key</label><input id="r-key" type="password" placeholder="The RELAY_KEY set on the relay" spellcheck="false"></div>
           <div class="field"><span class="label-like">Remote access</span><label class="switch-row"><input type="checkbox" id="r-enabled"><span>Allow admins to connect from anywhere</span></label></div>
           <div class="callout warn full" id="remote-http-warn" hidden>This address doesn't start with https://, so passwords would cross the internet unencrypted. Use the https:// address your host gives you.</div>

@@ -12,11 +12,15 @@ const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, '..', '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-test-'));
+// RELAY_URL / RELAY_KEY: test a relay that is already running (the
+// Cloudflare Worker under `wrangler dev`, or a deployed one) instead of
+// starting relay/relay.js.
+const EXTERNAL = process.env.RELAY_URL ? process.env.RELAY_URL.replace(/\/+$/, '') : '';
 const RELAY_PORT = 39000 + Math.floor(Math.random() * 500);
 const SHOP_PORT = RELAY_PORT + 600;
-const RELAY = `http://127.0.0.1:${RELAY_PORT}`;
+const RELAY = EXTERNAL || `http://127.0.0.1:${RELAY_PORT}`;
 const SHOP = `http://127.0.0.1:${SHOP_PORT}`;
-const KEY = 'test-relay-key';
+const KEY = process.env.RELAY_KEY || 'test-relay-key';
 const children = [];
 
 function start(script, cwd, env) {
@@ -76,7 +80,7 @@ function decrypt(blob, keyB64url) {
   // Shop server from a scratch copy (it keeps its database beside server/).
   for (const dir of ['server', 'public']) fs.cpSync(path.join(ROOT, dir), path.join(tmp, dir), { recursive: true });
   const nodePath = path.join(ROOT, 'node_modules');
-  start(path.join(ROOT, 'relay', 'relay.js'), tmp, { PORT: String(RELAY_PORT), RELAY_KEY: KEY, DATA_DIR: path.join(tmp, 'relay-data'), TRUST_PROXY: '0', ONLINE_GRACE_MS: '3000' });
+  if (!EXTERNAL) start(path.join(ROOT, 'relay', 'relay.js'), tmp, { PORT: String(RELAY_PORT), RELAY_KEY: KEY, DATA_DIR: path.join(tmp, 'relay-data'), TRUST_PROXY: '0', ONLINE_GRACE_MS: '3000' });
   const shop = start(path.join(tmp, 'server', 'server.js'), tmp, { PORT: String(SHOP_PORT), SESSION_SECRET: 'test', NO_BROWSER: '1', NODE_PATH: nodePath });
   await waitFor(async () => (await fetch(`${RELAY}/healthz`)).ok, 'relay');
   await waitFor(async () => (await fetch(`${SHOP}/login.html`)).ok, 'shop server');
@@ -182,10 +186,24 @@ function decrypt(blob, keyB64url) {
   assert.ok(direct.today.count >= 1, 'direct pulse is fresh');
 
   // Another shop can't take over this shop's address.
-  const hijack = await fetch(`${RELAY}/link/poll`, { method: 'POST', headers: { authorization: `Bearer ${conf.json.shop_id}.${'x'.repeat(43)}`, 'x-relay-key': KEY }, body: '{}' });
-  assert.equal(hijack.status, 403);
-  const noKey = await fetch(`${RELAY}/link/poll`, { method: 'POST', headers: { authorization: `Bearer abcdefgh12345678.${'y'.repeat(43)}` }, body: '{}' });
-  assert.equal(noKey.status, 401);
+  const linkMode = (await (await fetch(`${RELAY}/healthz`)).json()).link || 'poll';
+  if (linkMode === 'ws') {
+    const hello = (msg) => new Promise((resolve, reject) => {
+      const ws = new WebSocket(`${RELAY.replace(/^http/, 'ws')}/link/ws?shop=${msg.id}`);
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'hello', ...msg }));
+      ws.onmessage = (ev) => { if (ev.data !== 'pong') { resolve(JSON.parse(ev.data)); ws.close(); } };
+      ws.onerror = () => reject(new Error('websocket error'));
+    });
+    assert.equal((await hello({ id: conf.json.shop_id, secret: 'x'.repeat(43), key: KEY })).status, 403);
+    assert.equal((await hello({ id: 'abcdefgh12345678', secret: 'y'.repeat(43), key: 'wrong' })).status, 401);
+  } else {
+    const hijack = await fetch(`${RELAY}/link/poll`, { method: 'POST', headers: { authorization: `Bearer ${conf.json.shop_id}.${'x'.repeat(43)}`, 'x-relay-key': KEY }, body: '{}' });
+    assert.equal(hijack.status, 403);
+    const noKey = await fetch(`${RELAY}/link/poll`, { method: 'POST', headers: { authorization: `Bearer abcdefgh12345678.${'y'.repeat(43)}` }, body: '{}' });
+    assert.equal(noKey.status, 401);
+  }
+  // The shop's link is still up after those refusals.
+  assert.equal((await call(RELAY, 'GET', `${shopPath}/__status`)).json.online, true);
 
   // Shop PC switched off: offline page, JSON for the API, snapshot still there.
   shop.kill();
@@ -198,7 +216,7 @@ function decrypt(blob, keyB64url) {
   assert.equal(offApi.json.offline, true);
   assert.equal((await call(RELAY, 'GET', `${shopPath}/__pulse`)).status, 200);
 
-  console.log('relay: all checks passed');
+  console.log(`relay (${linkMode} link${EXTERNAL ? `, ${RELAY}` : ''}): all checks passed`);
 })().catch((err) => {
   console.error(err);
   for (const c of children) if (c.output) console.error(`--- ${c.spawnargs[1]}\n${c.output.slice(-3000)}`);

@@ -97,11 +97,12 @@ phone or any browser, without port forwarding or a fixed IP address.
    pushes an encrypted snapshot every 2 min
 ```
 
-1. **Run a relay** (once). It is a single dependency-free Node file,
-   [`relay/relay.js`](relay/README.md). Free on Render: *New > Blueprint*, pick
-   this repository (it reads `render.yaml`), and enter a long random
-   `RELAY_KEY`. Or run `docker build -t relay relay && docker run -p 8080:8080 -e RELAY_KEY=… relay`
-   on any server behind HTTPS.
+1. **Run a relay** (once). Free on Cloudflare with no card: follow
+   [`relay-cloudflare/README.md`](relay-cloudflare/README.md) (an account,
+   an API token and three GitHub secrets; GitHub Actions deploys and tests
+   it). Or run the Node version, [`relay/relay.js`](relay/README.md), on any
+   server behind HTTPS (`docker build -t relay relay && docker run -p 8080:8080 -e RELAY_KEY=… relay`),
+   or on Render with `render.yaml`.
 2. **On the shop PC**, sign in as admin, change the default password
    (remote access stays off until you do), then open **Settings > Remote
    access and phone app**: enter the relay address and key, switch on
@@ -234,7 +235,8 @@ receipt-system/
 │   └── test/                  SNMP, photocopy and printer-control tests (simulated printer)
 │   ├── config.example.json
 │   └── README.md              Agent-specific setup & troubleshooting
-├── relay/                   Relay for remote access (no dependencies; Dockerfile, test)
+├── relay/                   Relay for remote access (Node, no dependencies; Dockerfile, end-to-end test)
+├── relay-cloudflare/        The same relay as a Cloudflare Worker (free plan)
 ├── android/                 Receipt Admin, the Android app (Java, no libraries)
 ├── scripts/build-exe.js     Builds ReceiptSystem.exe + PrintMonitorAgent.exe (Node SEA)
 ├── windows/                 install.bat / start.bat / build.bat (standalone .exe, see WINDOWS-SETUP.md)

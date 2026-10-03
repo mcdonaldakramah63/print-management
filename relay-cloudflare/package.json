@@ -1,0 +1,12 @@
+{
+  "name": "receipt-relay-cloudflare",
+  "private": true,
+  "description": "Receipt System relay on Cloudflare Workers + Durable Objects",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}
