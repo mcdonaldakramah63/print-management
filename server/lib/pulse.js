@@ -116,16 +116,8 @@ function buildPulse(now = new Date()) {
   for (const a of safe(() => riskAlerts(require('../routes/reconciliation').reconcile, now), [])) {
     alerts.push({ key: `risk:${keyOf(`${a.type}:${a.title}`)}`, kind: 'risk', severity: a.severity, title: a.title, detail: a.detail });
   }
-  for (const t of toner) {
-    for (const s of t.supplies) {
-      if (s.status === 'replace_now' || s.status === 'low') {
-        alerts.push({ key: `toner:${keyOf(`${t.printer}:${s.colorant}:${s.status}`)}`, kind: 'toner', severity: s.status === 'replace_now' ? 'high' : 'medium', title: `${t.printer}: ${s.colorant} at ${s.percent}%` });
-      }
-    }
-  }
-  for (const s of lowStock) {
-    alerts.push({ key: `stock:${keyOf(`${s.name}:${s.stock_qty <= 0 ? 'out' : 'low'}`)}`, kind: 'stock', severity: s.stock_qty <= 0 ? 'high' : 'medium', title: s.stock_qty <= 0 ? `${s.name} is out of stock` : `${s.name} is low (${s.stock_qty} left)` });
-  }
+  // Toner and stock alerts: the same ones the admin sees under the bell.
+  alerts.push(...safe(() => require('./notifications').forPulse(), []));
 
   const agents = db.prepare('SELECT label, last_seen_at FROM agents WHERE active = 1 ORDER BY label').all();
 

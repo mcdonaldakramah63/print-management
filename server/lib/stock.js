@@ -18,6 +18,8 @@ function moveStock({ productId, delta, reason, saleId = null, userId = null, not
   if (info.changes > 0) {
     insertMovement.run(productId, delta, reason, saleId, userId, String(note).slice(0, 300));
   }
+  // Stock changed: re-check low-stock alerts shortly (lazy require: no cycle).
+  require('./notifications').soon();
 }
 
 module.exports = { moveStock, insertMovement };

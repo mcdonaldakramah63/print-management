@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">Receipt Admin</string>
     <string name="channel_alerts">Shop alerts</string>
-    <string name="channel_alerts_desc">Printers that stop, risk alerts, toner and stock running out</string>
+    <string name="channel_alerts_desc">Toner running low, stock running out, printers that stop and risk alerts</string>
 </resources>

@@ -36,7 +36,7 @@ final class Alerts {
         nm.createNotificationChannel(ch);
     }
 
-    /** Alerts worth a notification: every printer problem, other high ones. */
+    /** Alerts worth a notification: printer problems, toner and stock running low, other high ones. */
     static List<JSONObject> notable(JSONObject pulse) {
         List<JSONObject> list = new ArrayList<>();
         JSONArray arr = pulse == null ? null : pulse.optJSONArray("alerts");
@@ -44,7 +44,8 @@ final class Alerts {
         for (int i = 0; i < arr.length(); i++) {
             JSONObject a = arr.optJSONObject(i);
             if (a == null) continue;
-            if ("printer".equals(a.optString("kind")) || "high".equals(a.optString("severity"))) list.add(a);
+            String kind = a.optString("kind");
+            if ("printer".equals(kind) || "toner".equals(kind) || "stock".equals(kind) || "high".equals(a.optString("severity"))) list.add(a);
         }
         return list;
     }

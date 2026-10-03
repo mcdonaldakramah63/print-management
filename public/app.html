@@ -14,17 +14,20 @@
     <button class="menu-btn" id="menu-btn" type="button" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg><span class="count" id="menu-count" hidden></span></button>
     <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M18 2v32M2 18h32" stroke="currentColor" stroke-width="2.4"/><circle cx="18" cy="18" r="4.2" fill="#D6167A"/></svg></span>
     <span class="mobile-title" id="mobile-title">Receipt System</span>
+    <button class="bell-btn admin-only" type="button" data-bell aria-label="Alerts" aria-haspopup="dialog" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="count" data-bell-count hidden></span></button>
   </header>
   <div class="nav-scrim" id="nav-scrim" aria-hidden="true"></div>
   <nav class="sidebar" id="sidebar" aria-label="Main">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M18 2v32M2 18h32" stroke="currentColor" stroke-width="2.4"/><circle cx="18" cy="18" r="4.2" fill="#D6167A"/></svg></span>
-      <span><span class="brand-name">Receipt System</span><span class="brand-sub" id="brand-business">&nbsp;</span></span>
+      <span style="flex:1;min-width:0;"><span class="brand-name">Receipt System</span><span class="brand-sub" id="brand-business">&nbsp;</span></span>
+      <button class="bell-btn admin-only" type="button" data-bell aria-label="Alerts" aria-haspopup="dialog" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="count" data-bell-count hidden></span></button>
     </div>
     <div class="cmyk-bar printing" aria-hidden="true"><span class="c"></span><span class="m"></span><span class="y"></span><span class="k"></span></div>
 
     <a class="nav-link" data-view="dashboard" href="#dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard</a>
     <a class="nav-link" data-view="sale" href="#sale"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>New sale</a>
+    <a class="nav-link" data-view="jobs" href="#jobs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10l1.5 1.5L13 9M9 16h6"/></svg>Jobs<span class="count" id="jobs-count" hidden></span></a>
     <a class="nav-link" data-view="history" href="#history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>Sales history</a>
     <a class="nav-link" data-view="reports" href="#reports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Reports &amp; close</a>
     <a class="nav-link admin-only" data-view="customers" href="#customers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Customers</a>
@@ -147,6 +150,24 @@
           <button class="btn btn-primary btn-lg btn-block" type="button" id="complete-sale-btn">Complete sale &amp; print receipt</button>
         </section>
       </div>
+    </section>
+
+    <!-- ============ JOBS (everyone) ============ -->
+    <section class="view" id="view-jobs" aria-labelledby="h-jobs">
+      <div class="page-head">
+        <div><h1 id="h-jobs">Jobs</h1>
+          <p class="muted" style="margin:6px 0 0; max-width:720px;">Orders taken at the counter: build the job, get the price from your catalog, print a ticket, and follow it from the queue to collection.</p></div>
+        <div class="page-actions">
+          <label class="sr-only" for="jobs-search">Search jobs</label><input class="input" id="jobs-search" placeholder="Job no., customer or phone" style="width:220px;" autocomplete="off">
+          <button class="btn btn-primary" type="button" id="new-job-btn">+ New job</button>
+        </div>
+      </div>
+      <div class="alert-chips" id="jobs-summary" aria-live="polite"></div>
+      <div class="job-board" id="job-board"></div>
+      <section class="card stack" aria-labelledby="h-jobs-done">
+        <h2 id="h-jobs-done">Collected and cancelled, last 7 days</h2>
+        <div class="table-wrap" id="jobs-done"></div>
+      </section>
     </section>
 
     <!-- ============ HISTORY ============ -->
@@ -373,6 +394,8 @@
           <div class="field"><label for="s-footer">Receipt footer note</label><input id="s-footer" placeholder="Thank you for your patronage!"></div>
           <div class="field"><label for="s-lead">Supplier lead time (days)</label><input id="s-lead" type="number" min="1" max="90" step="1" required></div>
           <div class="field"><label for="s-cover">Each order should cover (days)</label><input id="s-cover" type="number" min="1" max="180" step="1" required></div>
+          <div class="field"><label for="s-toner-warn">Alert when toner is below (%)</label><input id="s-toner-warn" type="number" min="2" max="90" step="1" required></div>
+          <div class="field"><label for="s-toner-critical">Say "replace now" below (%)</label><input id="s-toner-critical" type="number" min="1" max="89" step="1" required></div>
           <div class="field full">
             <label for="s-logo">Logo (optional, under 1.5 MB)</label>
             <div class="row"><input id="s-logo" type="file" accept="image/*"><button class="btn btn-ghost btn-sm" type="button" id="s-logo-remove">Remove logo</button></div>
@@ -434,6 +457,17 @@
 </div>
 
 <div id="modal-root"></div>
+<div class="notif-panel admin-only" id="notif-panel" role="dialog" aria-modal="false" aria-labelledby="notif-title" hidden>
+  <div class="notif-head">
+    <h2 id="notif-title">Alerts</h2>
+    <button class="btn btn-ghost btn-sm" type="button" id="notif-read-all">Mark all read</button>
+  </div>
+  <div class="notif-desktop" id="notif-desktop" hidden>
+    <span class="small">Get these alerts as pop-ups on this computer, even when this tab is in the background.</span>
+    <button class="btn btn-outline btn-sm" type="button" id="notif-enable">Turn on</button>
+  </div>
+  <div class="notif-list" id="notif-list"></div>
+</div>
 
 <script src="js/api.js"></script>
 <script src="js/app.js"></script>

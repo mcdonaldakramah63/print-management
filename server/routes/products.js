@@ -5,6 +5,13 @@ const { moveStock, insertMovement } = require('../lib/stock');
 
 const router = express.Router();
 
+// Any product change (stock count, alert level, new product) can raise or
+// clear a low-stock alert: re-check once the change is saved.
+router.use((req, res, next) => {
+  if (req.method !== 'GET') res.on('finish', () => require('../lib/notifications').soon());
+  next();
+});
+
 // List products. By default only active ones (for the sale screen);
 // pass ?all=1 to include inactive ones (for the admin product manager).
 router.get('/', requireAuth, (req, res) => {

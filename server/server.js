@@ -35,6 +35,8 @@ const printerRoutes = require('./routes/printers');
 const { router: reconciliationRoutes } = require('./routes/reconciliation');
 const { router: remoteRoutes, publicRouter: remotePublic } = require('./routes/remote');
 const remoteLink = require('./lib/remoteLink');
+const notificationRoutes = require('./routes/notifications');
+const jobRoutes = require('./routes/jobs');
 const { SqliteStore } = require('./lib/sessionStore');
 const { createStatic, diskSource, seaSource, compressResponses } = require('./lib/staticFiles');
 
@@ -95,6 +97,8 @@ app.use('/api/copies', copyRoutes);
 app.use('/api/printers', printerRoutes);
 app.use('/api/reconciliation', reconciliationRoutes);
 app.use('/api/remote', remoteRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/jobs', jobRoutes);
 app.use(remotePublic);
 
 // Relative, so it also works under the relay's /s/<shop>/ prefix.
@@ -139,6 +143,7 @@ const server = app.listen(PORT, () => {
   console.log('------------------------------------------------------');
   if (STANDALONE) openBrowser(url);
   remoteLink.start(server.address().port);
+  require('./lib/notifications').start();
 });
 
 server.on('error', (err) => {

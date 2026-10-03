@@ -7,6 +7,7 @@ let catalog = [];          // active products, for the checkout
 let cart = [];             // [{ key, product_id, name, unit_price, qty, session_id? }]
 let cartSessions = new Map(); // print session id -> label, billed by this sale
 let cartCopies = new Map();   // photocopy run id -> label, billed by this sale
+let cartJobs = new Map();     // job id -> label, paid for by this sale
 let cartMotion = null;        // { key, kind: 'new' | 'bump' } for the next cart render
 let cartKey = 0;
 let payMethod = 'cash';
@@ -17,7 +18,7 @@ let routeParam = '';
 let historyPage = 1;
 
 const ADMIN_VIEWS = ['products', 'print-monitor', 'reconcile', 'users', 'settings', 'customers'];
-const VIEWS = ['dashboard', 'sale', 'history', 'reports', 'customers', 'printers', 'printer', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
+const VIEWS = ['dashboard', 'sale', 'jobs', 'history', 'reports', 'customers', 'printers', 'printer', 'print-monitor', 'reconcile', 'products', 'users', 'settings', 'account'];
 const PAY_LABELS = { cash: 'Cash', momo: 'Mobile money', card: 'Card' };
 
 const $ = (id) => document.getElementById(id);
@@ -61,6 +62,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
   setupNav();
   setupSale();
+  setupJobs();
   setupCustomerLookup();
   setupHistory();
   setupReports();
@@ -76,6 +78,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     setupUsers();
     setupSettings();
     setupRemote();
+    setupAlerts();
     refreshUnreviewedCount();
   }
   setupAccount();
@@ -259,7 +262,7 @@ function showError(el, message) {
  * Open a modal form. `body` is trusted HTML built with escapeHtml().
  * onSubmit(form) may throw to show an error; resolves → modal closes.
  */
-function openModal({ title, body, submitLabel = 'Save', danger = false, wide = false, onSubmit, onOpen, onClose, hideSubmit = false }) {
+function openModal({ title, body, submitLabel = 'Save', secondaryLabel = null, danger = false, wide = false, onSubmit, onOpen, onClose, hideSubmit = false }) {
   const root = $('modal-root');
   const previouslyFocused = document.activeElement;
   root.innerHTML = `
@@ -270,6 +273,7 @@ function openModal({ title, body, submitLabel = 'Save', danger = false, wide = f
         <div class="error-text" data-modal-error hidden></div>
         <div class="modal-foot">
           <button type="button" class="btn btn-outline" data-modal-cancel>${hideSubmit ? 'Close' : 'Cancel'}</button>
+          ${hideSubmit || !secondaryLabel ? '' : `<button type="submit" class="btn btn-outline" data-alt>${escapeHtml(secondaryLabel)}</button>`}
           ${hideSubmit ? '' : `<button type="submit" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${escapeHtml(submitLabel)}</button>`}
         </div>
       </form>
@@ -296,15 +300,17 @@ function openModal({ title, body, submitLabel = 'Save', danger = false, wide = f
     e.preventDefault();
     errEl.hidden = true;
     if (!form.reportValidity()) return;
-    const btn = form.querySelector('button[type=submit]');
-    if (btn) btn.disabled = true;
+    // Which submit button: the secondary one (data-alt) asks for its variant.
+    const alt = !!(e.submitter && e.submitter.hasAttribute('data-alt'));
+    const btns = form.querySelectorAll('button[type=submit]');
+    btns.forEach((b) => { b.disabled = true; });
     try {
-      if (onSubmit) await onSubmit(form);
+      if (onSubmit) await onSubmit(form, { alt });
       close(true);
     } catch (err) {
       showError(errEl, err.message);
     } finally {
-      if (btn) btn.disabled = false;
+      btns.forEach((b) => { b.disabled = false; });
     }
   });
   if (onOpen) onOpen(form);
@@ -420,6 +426,7 @@ function navigateTo(target) {
   const loaders = {
     dashboard: loadDashboard,
     sale: enterSale,
+    jobs: loadJobs,
     history: loadHistory,
     reports: () => Promise.all([loadReport(), loadClose(), loadClosings(), ...(isAdmin() ? [loadTraffic(), loadMix()] : [])]),
     customers: loadCustomers,
@@ -621,7 +628,7 @@ function setupSale() {
     const inputs = $('cart-lines').querySelectorAll('.line-name');
     if (inputs.length) inputs[inputs.length - 1].focus();
   });
-  $('clear-cart-btn').addEventListener('click', () => { cart = []; cartSessions.clear(); cartCopies.clear(); renderCart(); renderWaitingSessions(); });
+  $('clear-cart-btn').addEventListener('click', () => { cart = []; cartSessions.clear(); cartCopies.clear(); cartJobs.clear(); renderCart(); renderWaitingSessions(); });
   $('waiting-refresh').addEventListener('click', () => loadWaitingSessions());
   $('waiting-list').addEventListener('click', (e) => {
     const b = e.target.closest('[data-add-session]');
@@ -642,7 +649,13 @@ function setupSale() {
       cart = cart.filter((l) => l.copy_id !== id);
       cartCopies.delete(id);
     }
-    if (!b && !c) return;
+    const j = e.target.closest('[data-remove-job]');
+    if (j) {
+      const id = Number(j.dataset.removeJob);
+      cart = cart.filter((l) => l.job_id !== id);
+      cartJobs.delete(id);
+    }
+    if (!b && !c && !j) return;
     renderCart();
     renderWaitingSessions();
   });
@@ -749,7 +762,7 @@ function renderCatalog() {
 
 function addToCart(product) {
   if (!product) return;
-  const line = cart.find((l) => l.product_id === product.id && l.unit_price === product.price && !l.session_id && !l.copy_id);
+  const line = cart.find((l) => l.product_id === product.id && l.unit_price === product.price && !l.session_id && !l.copy_id && !l.job_id);
   if (line) {
     line.qty = round2(line.qty + 1);
     cartMotion = { key: line.key, kind: 'bump' };
@@ -850,7 +863,10 @@ function renderCartSessions() {
       <button type="button" class="chip-remove" data-remove-session="${id}" aria-label="Remove print session ${escapeHtml(label)} from this sale">&times;</button></span>`).join('') +
     [...cartCopies.entries()].map(([id, label]) => `
     <span class="alert-chip info">Billing photocopies: ${escapeHtml(label)}
-      <button type="button" class="chip-remove" data-remove-copy="${id}" aria-label="Remove photocopies ${escapeHtml(label)} from this sale">&times;</button></span>`).join('');
+      <button type="button" class="chip-remove" data-remove-copy="${id}" aria-label="Remove photocopies ${escapeHtml(label)} from this sale">&times;</button></span>`).join('') +
+    [...cartJobs.entries()].map(([id, label]) => `
+    <span class="alert-chip info">Paying for job ${escapeHtml(label)}
+      <button type="button" class="chip-remove" data-remove-job="${id}" aria-label="Remove job ${escapeHtml(label)} from this sale">&times;</button></span>`).join('');
 }
 
 function renderCart() {
@@ -860,6 +876,9 @@ function renderCart() {
   }
   for (const id of [...cartCopies.keys()]) {
     if (!cart.some((l) => l.copy_id === id)) cartCopies.delete(id);
+  }
+  for (const id of [...cartJobs.keys()]) {
+    if (!cart.some((l) => l.job_id === id)) cartJobs.delete(id);
   }
   renderCartSessions();
   const wrap = $('cart-lines');
@@ -991,6 +1010,7 @@ function resetSale() {
   cart = [];
   cartSessions.clear();
   cartCopies.clear();
+  cartJobs.clear();
   $('customer-name').value = '';
   $('customer-phone').value = '';
   $('discount-value').value = 0;
@@ -1023,7 +1043,8 @@ async function completeSale() {
     payment_method: payMethod,
     amount_tendered: payMethod === 'cash' && tenderedRaw !== '' ? parseFloat(tenderedRaw) : null,
     print_session_ids: [...cartSessions.keys()],
-    copy_event_ids: [...cartCopies.keys()]
+    copy_event_ids: [...cartCopies.keys()],
+    job_ids: [...cartJobs.keys()]
   };
 
   const btn = $('complete-sale-btn');
@@ -1032,6 +1053,7 @@ async function completeSale() {
   try {
     const result = await api('POST', '/api/sales', payload);
     tab.go(`receipt.html?id=${result.id}`);
+    if (payload.job_ids.length) refreshJobsCount();
     const label = btn.innerHTML;
     btn.classList.add('btn-done');
     inkSplash(btn);
@@ -1050,6 +1072,387 @@ async function completeSale() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ---------------------------------------------------------------
+// Jobs: the job builder and the board
+// ---------------------------------------------------------------
+const JOB_STATUS = {
+  queued: { label: 'Queued', next: 'printing', act: 'Start printing', empty: 'Nothing waiting.' },
+  printing: { label: 'Printing', next: 'ready', act: 'Mark ready', empty: 'Nothing in progress.' },
+  ready: { label: 'Ready for collection', next: 'collected', act: 'Mark collected', empty: 'Nothing waiting to be collected.' },
+  collected: { label: 'Collected' },
+  cancelled: { label: 'Cancelled' }
+};
+const PAPER_SIZES = ['A4', 'A3', 'A5', 'A6', 'Letter', 'Legal'];
+let jobList = [];
+let jobSearchTimer = null;
+
+function setupJobs() {
+  $('new-job-btn').addEventListener('click', () => openJobBuilder());
+  $('jobs-search').addEventListener('input', () => {
+    clearTimeout(jobSearchTimer);
+    jobSearchTimer = setTimeout(() => loadJobs().catch((err) => toast(err.message, true)), 250);
+  });
+  $('view-jobs').addEventListener('click', onJobAction);
+  refreshJobsCount();
+  setInterval(() => { if (currentView === 'jobs') loadJobs().catch(() => {}); else refreshJobsCount(); }, 60000);
+}
+
+function updateJobsBadge(counts) {
+  const el = $('jobs-count');
+  const todo = counts.queued + counts.printing;
+  el.hidden = todo === 0 && counts.overdue === 0;
+  el.textContent = String(todo);
+  el.title = `${plural(todo, 'job')} to do${counts.overdue ? `, ${counts.overdue} overdue` : ''}`;
+}
+
+async function refreshJobsCount() {
+  try { updateJobsBadge((await api('GET', '/api/jobs?days=1')).counts); } catch (_) { /* badge is optional */ }
+}
+
+async function loadJobs() {
+  const q = $('jobs-search').value.trim();
+  const { jobs, counts } = await api('GET', `/api/jobs${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+  jobList = jobs;
+  if (!q) updateJobsBadge(counts);
+  renderJobs(counts);
+}
+
+function partSummary(p) {
+  if (p.type === 'print' || p.type === 'copy') {
+    const bits = [`${p.color === 'color' ? 'Colour' : 'B&W'} ${p.type === 'copy' ? 'photocopy' : 'print'}`, `${plural(p.pages, 'page')}${p.copies > 1 ? ` × ${p.copies} copies` : ''}`];
+    if (p.sides === 2) bits.push('both sides');
+    if (p.paper && p.paper !== 'A4') bits.push(p.paper);
+    return bits.join(' · ');
+  }
+  if (p.type === 'item') {
+    const product = catalog.find((x) => x.id === p.product_id);
+    return `${product ? product.name : 'Item'} × ${p.qty}`;
+  }
+  return `${p.name} × ${p.qty}`;
+}
+
+function dueText(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `today ${time}`;
+  if (d.toDateString() === tomorrow.toDateString()) return `tomorrow ${time}`;
+  return d.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function jobDueBadge(j) {
+  if (!j.due_at) return '';
+  if (j.overdue) return `<span class="badge danger">Overdue · due ${escapeHtml(dueText(j.due_at))}</span>`;
+  const soon = j.status !== 'ready' && Date.parse(j.due_at) - Date.now() < 2 * 3600000;
+  return `<span class="badge${soon ? ' warn' : ''}">Due ${escapeHtml(dueText(j.due_at))}</span>`;
+}
+
+function jobPaidBadge(j) {
+  return j.paid ? `<span class="badge ok">Paid${j.receipt_no ? ` · ${escapeHtml(j.receipt_no)}` : ''}</span>` : '<span class="badge attn">Not paid</span>';
+}
+
+function jobCard(j) {
+  const st = JOB_STATUS[j.status];
+  // A finished job that isn't paid for goes to the till, which hands it over.
+  const primary = j.status === 'ready' && !j.paid
+    ? '<button type="button" class="btn btn-primary btn-sm" data-job-act="bill">Bill &amp; hand over</button>'
+    : `<button type="button" class="btn btn-primary btn-sm" data-job-act="advance">${st.act}</button>`;
+  return `<article class="job-card${j.overdue ? ' overdue' : ''}" data-job="${j.id}" aria-label="Job ${escapeHtml(j.job_no)}">
+    <div class="job-card-head"><span class="job-no">${escapeHtml(j.job_no)}</span><strong class="num">${escapeHtml(cur(j.total))}</strong></div>
+    <div class="job-customer">${escapeHtml(j.customer_name || 'Walk-in customer')}${j.customer_phone ? ` <span class="muted small">${escapeHtml(j.customer_phone)}</span>` : ''}</div>
+    ${j.title ? `<div class="small">${escapeHtml(j.title)}</div>` : ''}
+    <ul class="job-parts">${j.parts.map((p) => `<li>${escapeHtml(partSummary(p))}</li>`).join('')}</ul>
+    <div class="alert-chips">${jobDueBadge(j)}${jobPaidBadge(j)}</div>
+    ${j.notes ? `<div class="small muted job-notes">${escapeHtml(j.notes)}</div>` : ''}
+    <div class="job-actions">
+      ${primary}
+      ${j.paid || j.status === 'ready' ? '' : '<button type="button" class="btn btn-outline btn-sm" data-job-act="bill">Bill</button>'}
+      <button type="button" class="btn btn-ghost btn-sm" data-job-act="ticket">Ticket</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-job-act="edit">Edit</button>
+      ${j.status === 'ready' && !j.paid ? '<button type="button" class="btn btn-ghost btn-sm" data-job-act="advance">Collected</button>' : ''}
+      ${j.paid ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-job-act="cancel">Cancel</button>'}
+    </div>
+  </article>`;
+}
+
+function renderJobs(counts) {
+  const open = jobList.filter((j) => ['queued', 'printing', 'ready'].includes(j.status));
+  const done = jobList.filter((j) => !['queued', 'printing', 'ready'].includes(j.status));
+  const chips = [];
+  if (counts.overdue) chips.push(`<span class="alert-chip">${plural(counts.overdue, 'job')} overdue</span>`);
+  if (counts.unpaid_ready) chips.push(`<span class="alert-chip info">${counts.unpaid_ready} ready and not paid for</span>`);
+  $('jobs-summary').innerHTML = chips.join('');
+  $('job-board').innerHTML = ['queued', 'printing', 'ready'].map((s) => {
+    const list = open.filter((j) => j.status === s);
+    return `<section class="job-col job-col-${s}" aria-label="${JOB_STATUS[s].label}">
+      <h2 class="job-col-head"><span>${JOB_STATUS[s].label}</span><span class="badge">${list.length}</span></h2>
+      ${list.length ? list.map(jobCard).join('') : `<p class="muted small job-col-empty">${JOB_STATUS[s].empty}</p>`}
+    </section>`;
+  }).join('');
+  $('jobs-done').innerHTML = done.length === 0 ? '<p class="muted" style="margin:0;">Nothing finished yet.</p>' : `
+    <table><thead><tr><th>Job</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Paid</th><th>When</th><th></th></tr></thead><tbody>
+    ${done.map((j) => `<tr data-job="${j.id}">
+      <td class="mono">${escapeHtml(j.job_no)}</td>
+      <td>${escapeHtml(j.customer_name || 'Walk-in customer')}${j.title ? `<div class="muted small">${escapeHtml(j.title)}</div>` : ''}</td>
+      <td>${j.status === 'collected' ? '<span class="badge ok">Collected</span>' : '<span class="badge">Cancelled</span>'}</td>
+      <td class="num">${escapeHtml(cur(j.total))}</td>
+      <td>${j.paid ? escapeHtml(j.receipt_no || 'Yes') : (j.status === 'collected' ? '<span class="badge attn">Not paid</span>' : '')}</td>
+      <td class="small">${escapeHtml(formatDbDate(j.collected_at || j.updated_at))}</td>
+      <td class="num" style="white-space:nowrap;">
+        ${j.status === 'collected' && !j.paid ? '<button type="button" class="btn btn-outline btn-sm" data-job-act="bill">Bill</button>' : ''}
+        <button type="button" class="btn btn-ghost btn-sm" data-job-act="ticket">Ticket</button>
+        ${j.status === 'cancelled' ? '<button type="button" class="btn btn-ghost btn-sm" data-job-act="reopen">Reopen</button>' : ''}
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+async function setJobStatus(j, status) {
+  const { job } = await api('PATCH', `/api/jobs/${j.id}/status`, { status });
+  toast(`${job.job_no}: ${JOB_STATUS[job.status].label.toLowerCase()}.`);
+  await loadJobs();
+}
+
+async function onJobAction(e) {
+  const btn = e.target.closest('[data-job-act]');
+  const holder = btn && btn.closest('[data-job]');
+  if (!holder) return;
+  const j = jobList.find((x) => x.id === Number(holder.dataset.job));
+  if (!j) return;
+  const act = btn.dataset.jobAct;
+  if (act === 'ticket') return openJobTicket(j.id);
+  if (act === 'edit') return openJobBuilder(j);
+  if (act === 'bill') return billJob(j);
+  btn.disabled = true;
+  try {
+    if (act === 'advance') {
+      const next = JOB_STATUS[j.status].next;
+      if (next === 'collected' && !j.paid && !(await confirmModal({
+        title: `Hand over ${j.job_no} unpaid?`,
+        message: `${j.job_no} (${cur(j.total)}) has not been paid for. Mark it collected anyway? You can still bill it later.`,
+        confirmLabel: 'Mark collected', danger: false
+      }))) return;
+      await setJobStatus(j, next);
+    } else if (act === 'cancel') {
+      if (!(await confirmModal({ title: `Cancel ${j.job_no}?`, message: `${j.customer_name || 'The customer'}'s job comes off the board. You can reopen it from the list below.`, confirmLabel: 'Cancel job' }))) return;
+      await setJobStatus(j, 'cancelled');
+    } else if (act === 'reopen') {
+      await setJobStatus(j, 'queued');
+    }
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openJobTicket(id) {
+  if (IN_APP) window.location.href = `job.html?id=${id}`;
+  else window.open(`job.html?id=${id}`, '_blank');
+}
+
+// Put a job's priced lines on the till; the sale pays for the job.
+function billJob(j) {
+  if (j.paid) return toast(`${j.job_no} is already paid for.`, true);
+  if (!cartJobs.has(j.id)) {
+    for (const line of j.lines) {
+      cart.push({ key: ++cartKey, product_id: line.product_id, name: line.name, unit_price: line.unit_price, qty: line.qty, job_id: j.id });
+    }
+    cartJobs.set(j.id, `${j.job_no}${j.customer_name ? ` · ${j.customer_name}` : ''}`);
+    if (!$('customer-name').value.trim() && j.customer_name) $('customer-name').value = j.customer_name;
+    if (!$('customer-phone').value.trim() && j.customer_phone) $('customer-phone').value = j.customer_phone;
+  }
+  navigateTo('sale');
+  toast(`${j.job_no} is on the till${j.status === 'ready' ? ': completing the sale hands it over' : ''}.`);
+}
+
+// "YYYY-MM-DDTHH:MM" in local time, for <input type="datetime-local">.
+function localInputValue(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${localDateString(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const DUE_PRESETS = {
+  hour: () => { const d = new Date(Date.now() + 3600000); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0); return d; },
+  today: () => { const d = new Date(); d.setHours(17, 0, 0, 0); return d; },
+  tomorrow: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; },
+  none: () => null
+};
+
+const NEW_PART = {
+  print: () => ({ type: 'print', pages: 1, copies: 1, color: 'mono', sides: 1, paper: 'A4' }),
+  copy: () => ({ type: 'copy', pages: 1, copies: 1, color: 'mono', sides: 1, paper: 'A4' }),
+  item: () => ({ type: 'item', product_id: null, qty: 1 }),
+  custom: () => ({ type: 'custom', name: '', qty: 1, unit_price: 0 })
+};
+const PART_LABEL = { print: 'Print', copy: 'Photocopy', item: 'Item', custom: 'Custom line' };
+
+function partEditor(p, i, locked) {
+  const id = (f) => `jp-${i}-${f}`;
+  const dis = locked ? ' disabled' : '';
+  const field = (f, label, control, cls = '') => `<div class="field${cls}"><label for="${id(f)}">${label}</label>${control}</div>`;
+  const num = (f, value, step = '1') => `<input id="${id(f)}" type="number" min="${step === '1' ? 1 : 0}" step="${step}" inputmode="decimal" data-i="${i}" data-f="${f}" value="${escapeHtml(value ?? '')}"${dis}>`;
+  const select = (f, options, value) => `<select id="${id(f)}" data-i="${i}" data-f="${f}"${dis}>${options.map(([v, l]) => `<option value="${escapeHtml(v)}"${String(v) === String(value) ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('')}</select>`;
+  let fields = '';
+  if (p.type === 'print' || p.type === 'copy') {
+    fields = field('pages', p.type === 'copy' ? 'Pages (originals)' : 'Pages', num('pages', p.pages)) +
+      field('copies', 'Copies', num('copies', p.copies)) +
+      field('color', 'Colour', select('color', [['mono', 'B&W'], ['color', 'Colour']], p.color)) +
+      field('sides', 'Sides', select('sides', [[1, 'One side'], [2, 'Both sides']], p.sides)) +
+      field('paper', 'Paper', select('paper', PAPER_SIZES.map((s) => [s, s]), p.paper));
+  } else if (p.type === 'item') {
+    const items = catalog.filter((x) => !x.print_color_mode);
+    const options = [['', 'Choose…'], ...items.map((x) => [x.id, `${x.name} · ${cur(x.price)}`])];
+    fields = field('product_id', 'Item', select('product_id', options, p.product_id ?? ''), ' grow') + field('qty', 'Qty', num('qty', p.qty, 'any'));
+  } else {
+    fields = field('name', 'Description', `<input id="${id('name')}" maxlength="120" data-i="${i}" data-f="name" value="${escapeHtml(p.name)}" placeholder="e.g. Design work"${dis}>`, ' grow') +
+      field('qty', 'Qty', num('qty', p.qty, 'any')) + field('unit_price', 'Price each', num('unit_price', p.unit_price, '0.01'));
+  }
+  return `<div class="job-part job-part-${p.type}">
+    <div class="job-part-head"><span class="badge info">${PART_LABEL[p.type]}</span>${locked ? '' : `<button type="button" class="line-remove" data-part-remove="${i}" aria-label="Remove ${PART_LABEL[p.type].toLowerCase()} ${i + 1}">&times;</button>`}</div>
+    <div class="job-part-fields">${fields}</div>
+  </div>`;
+}
+
+function openJobBuilder(job) {
+  const editing = !!job;
+  const locked = editing && job.paid;
+  let parts = editing ? job.parts.map((p) => ({ ...p })) : [NEW_PART.print()];
+  let quoteSeq = 0;
+  let quoteTimer = null;
+  const taxNote = currentSettings.tax_rate > 0 ? ` Tax (${currentSettings.tax_rate}%) is added at the till.` : '';
+
+  const body = `
+    <div class="form-grid">
+      <div class="field"><label for="jb-name">Customer</label><input id="jb-name" maxlength="200" placeholder="Name" autocomplete="off" value="${escapeHtml(editing ? job.customer_name : '')}"></div>
+      <div class="field"><label for="jb-phone">Phone</label><input id="jb-phone" type="tel" maxlength="40" value="${escapeHtml(editing ? job.customer_phone : '')}"></div>
+      <div class="field full"><label for="jb-title">What is it? (optional)</label><input id="jb-title" maxlength="200" placeholder="e.g. Project report, funeral programme" value="${escapeHtml(editing ? job.title : '')}"></div>
+    </div>
+    <div class="stack" style="gap:10px;">
+      <span class="label-like" id="jb-work-label">The work</span>
+      ${locked ? `<div class="callout info">Paid for on ${escapeHtml(job.receipt_no || 'a sale')}: the work and price can't change. Void that sale to change them.</div>` : ''}
+      <div class="stack" style="gap:10px;" id="jb-parts" aria-labelledby="jb-work-label"></div>
+      ${locked ? '' : `<div class="chips" role="group" aria-label="Add to the job">
+        <button type="button" class="chip" data-add-part="print">+ Print</button>
+        <button type="button" class="chip" data-add-part="copy">+ Photocopy</button>
+        <button type="button" class="chip" data-add-part="item">+ Binding, lamination or other item</button>
+        <button type="button" class="chip" data-add-part="custom">+ Custom line</button>
+      </div>`}
+    </div>
+    <div class="job-quote" id="jb-quote" aria-live="polite"></div>
+    <div class="form-grid">
+      <div class="field"><label for="jb-due">Due</label><input id="jb-due" type="datetime-local" value="${editing && job.due_at ? localInputValue(new Date(job.due_at)) : ''}"></div>
+      <div class="field"><span class="label-like">Quick pick</span><div class="chips" id="jb-due-presets">
+        <button type="button" class="chip" data-due="hour">In an hour</button><button type="button" class="chip" data-due="today">Today 5 pm</button>
+        <button type="button" class="chip" data-due="tomorrow">Tomorrow 9 am</button><button type="button" class="chip" data-due="none">No time</button></div></div>
+      <div class="field full"><label for="jb-notes">Notes for whoever does the job</label><textarea id="jb-notes" rows="2" maxlength="1000" placeholder="e.g. Staple top left, cover on blue card">${escapeHtml(editing ? job.notes : '')}</textarea></div>
+    </div>
+    ${IN_APP ? '' : `<label class="check"><input type="checkbox" id="jb-ticket"${editing ? '' : ' checked'}> Print a job ticket after saving</label>`}`;
+
+  const renderParts = (form) => {
+    form.querySelector('#jb-parts').innerHTML = parts.length
+      ? parts.map((p, i) => partEditor(p, i, locked)).join('')
+      : '<p class="muted small" style="margin:0;">Add the work with the buttons below.</p>';
+  };
+
+  const renderQuote = (form, q, error) => {
+    const el = form.querySelector('#jb-quote');
+    if (error) { el.innerHTML = `<div class="error-text">${escapeHtml(error)}</div>`; return; }
+    el.innerHTML = `
+      ${q.lines.length ? `<table class="job-quote-table"><tbody>${q.lines.map((l) => `<tr><td>${escapeHtml(l.name)}</td><td class="num">${l.qty} × ${escapeHtml(money(l.unit_price, ''))}</td><td class="num">${escapeHtml(money(l.line_total, ''))}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${q.warnings.length ? `<div class="callout">${q.warnings.map((w) => `<span>${escapeHtml(w)}</span>`).join('')}</div>` : ''}
+      <div class="job-quote-total"><span>Price${q.sheets ? ` <span class="muted small">· ${plural(q.sheets, 'sheet')} of paper</span>` : ''}</span><strong class="num">${escapeHtml(cur(q.subtotal))}</strong></div>
+      ${taxNote ? `<div class="muted small">${escapeHtml(taxNote.trim())}</div>` : ''}`;
+  };
+
+  const requote = (form) => {
+    clearTimeout(quoteTimer);
+    quoteTimer = setTimeout(async () => {
+      const seq = ++quoteSeq;
+      if (!parts.length) return renderQuote(form, null, 'Add at least one part to the job.');
+      try {
+        const q = await api('POST', '/api/jobs/quote', { parts });
+        if (seq === quoteSeq) renderQuote(form, q);
+      } catch (err) {
+        if (seq === quoteSeq) renderQuote(form, null, err.message);
+      }
+    }, 200);
+  };
+
+  openModal({
+    title: editing ? `Edit job ${job.job_no}` : 'New job',
+    wide: true,
+    body,
+    submitLabel: 'Save job',
+    secondaryLabel: editing && job.paid ? null : 'Save & bill now',
+    onOpen: (form) => {
+      renderParts(form);
+      if (locked) renderQuote(form, { lines: job.lines, warnings: [], sheets: 0, subtotal: job.total });
+      else requote(form);
+      form.addEventListener('click', (e) => {
+        const add = e.target.closest('[data-add-part]');
+        if (add) {
+          parts.push(NEW_PART[add.dataset.addPart]());
+          renderParts(form);
+          const last = form.querySelectorAll('.job-part');
+          const first = last.length && last[last.length - 1].querySelector('input, select');
+          if (first) first.focus();
+          requote(form);
+        }
+        const rm = e.target.closest('[data-part-remove]');
+        if (rm) {
+          parts.splice(Number(rm.dataset.partRemove), 1);
+          renderParts(form);
+          requote(form);
+        }
+        const due = e.target.closest('[data-due]');
+        if (due) {
+          const d = DUE_PRESETS[due.dataset.due]();
+          form.querySelector('#jb-due').value = d ? localInputValue(d) : '';
+        }
+      });
+      const onEdit = (e) => {
+        const el = e.target;
+        if (el.dataset.i === undefined) return;
+        const p = parts[Number(el.dataset.i)];
+        const f = el.dataset.f;
+        if (['pages', 'copies', 'sides', 'qty', 'unit_price', 'product_id'].includes(f)) p[f] = el.value === '' ? null : Number(el.value);
+        else p[f] = el.value;
+        requote(form);
+      };
+      form.addEventListener('input', onEdit);
+      form.addEventListener('change', onEdit);
+    },
+    onSubmit: async (form, { alt }) => {
+      const ticketBox = form.querySelector('#jb-ticket');
+      // Opened now, inside the click, so it isn't blocked as a pop-up.
+      const tab = ticketBox && ticketBox.checked ? openPendingTab() : null;
+      const due = form.querySelector('#jb-due').value;
+      const payload = {
+        customer_name: form.querySelector('#jb-name').value.trim(),
+        customer_phone: form.querySelector('#jb-phone').value.trim(),
+        title: form.querySelector('#jb-title').value.trim(),
+        due_at: due ? new Date(due).toISOString() : null,
+        notes: form.querySelector('#jb-notes').value.trim()
+      };
+      if (!locked) payload.parts = parts;
+      let result;
+      try {
+        result = editing ? await api('PUT', `/api/jobs/${job.id}`, payload) : await api('POST', '/api/jobs', payload);
+      } catch (err) {
+        if (tab) tab.cancel();
+        throw err;
+      }
+      if (tab) tab.go(`job.html?id=${result.job.id}`);
+      toast(`Job ${result.job.job_no} ${editing ? 'updated' : 'saved'} · ${cur(result.job.total)}`);
+      if (alt) billJob(result.job);
+      else if (currentView === 'jobs') loadJobs().catch(() => {});
+      else refreshJobsCount();
+    }
+  });
 }
 
 // ---------------------------------------------------------------
@@ -2942,6 +3345,8 @@ function fillSettingsForm() {
   $('s-footer').value = s.footer_note;
   $('s-lead').value = s.reorder_lead_days;
   $('s-cover').value = s.reorder_cover_days;
+  $('s-toner-warn').value = s.toner_warn_pct ?? 20;
+  $('s-toner-critical').value = s.toner_critical_pct ?? 10;
   pendingLogo = undefined;
   $('s-logo').value = '';
   showLogoPreview(s.logo_data_url);
@@ -3126,6 +3531,8 @@ function setupSettings() {
         footer_note: $('s-footer').value.trim(),
         reorder_lead_days: parseInt($('s-lead').value, 10),
         reorder_cover_days: parseInt($('s-cover').value, 10),
+        toner_warn_pct: parseInt($('s-toner-warn').value, 10),
+        toner_critical_pct: parseInt($('s-toner-critical').value, 10),
         logo_data_url: pendingLogo === undefined ? currentSettings.logo_data_url : pendingLogo
       });
       await loadSettings();
@@ -3159,4 +3566,133 @@ function setupAccount() {
       showError($('password-error'), err.message);
     }
   });
+}
+
+// ---------------------------------------------------------------
+// Alerts (admin): toner running low, stock running out
+// A bell with the unread count; a panel listing open and recently fixed
+// alerts; a toast and (if allowed) a desktop pop-up when a new one comes in.
+// The server raises each alert once and again only if it gets worse.
+// ---------------------------------------------------------------
+const ALERT_ICONS = {
+  toner: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></svg>',
+  stock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
+  fixed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
+};
+let alertSeen = null; // "id:raised_at" of alerts already announced in this tab
+let alertData = { open: [], resolved: [], unread: 0 };
+
+function setupAlerts() {
+  const panel = $('notif-panel');
+  if (!panel) return;
+  document.querySelectorAll('[data-bell]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleAlerts(panel.hidden, b);
+  }));
+  document.addEventListener('click', (e) => {
+    if (!panel.hidden && !panel.contains(e.target) && !e.target.closest('[data-bell]')) toggleAlerts(false);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) toggleAlerts(false, null, true); });
+  $('notif-read-all').addEventListener('click', async () => {
+    alertData = await api('POST', '/api/notifications/read', { all: true });
+    renderAlerts();
+  });
+  $('notif-enable').addEventListener('click', async () => {
+    try { await Notification.requestPermission(); } catch (_) { /* unsupported */ }
+    renderAlerts();
+    if (window.Notification && Notification.permission === 'granted') toast('Alert pop-ups are on for this computer.');
+  });
+  $('notif-list').addEventListener('click', async (e) => {
+    const item = e.target.closest('[data-alert]');
+    if (!item) return;
+    const id = Number(item.dataset.alert);
+    toggleAlerts(false);
+    if (item.dataset.link) navigateTo(item.dataset.link);
+    if (item.classList.contains('unread')) {
+      alertData = await api('POST', '/api/notifications/read', { ids: [id] }).catch(() => alertData);
+      updateBell(alertData.unread);
+    }
+  });
+  pollAlerts();
+  setInterval(() => { if (!document.hidden) pollAlerts(); }, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pollAlerts(); });
+}
+
+function toggleAlerts(open, from, returnFocus) {
+  const panel = $('notif-panel');
+  if (open === !panel.hidden) return;
+  panel.hidden = !open;
+  document.querySelectorAll('[data-bell]').forEach((b) => b.setAttribute('aria-expanded', String(open)));
+  if (open) {
+    panel.classList.toggle('from-bar', !!(from && from.closest('.mobile-bar')));
+    renderAlerts();
+    loadAlerts();
+    panel.querySelector('button').focus({ preventScroll: true });
+  } else if (returnFocus) {
+    const bell = [...document.querySelectorAll('[data-bell]')].find((b) => b.offsetParent);
+    if (bell) bell.focus();
+  }
+}
+
+async function loadAlerts() {
+  alertData = await api('GET', '/api/notifications');
+  updateBell(alertData.unread);
+  if (!$('notif-panel').hidden) renderAlerts();
+}
+
+async function pollAlerts() {
+  let list;
+  try { ({ notifications: list } = await api('GET', '/api/notifications/unread')); } catch (_) { return; }
+  updateBell(list.length);
+  const sig = (n) => `${n.id}:${n.raised_at}`;
+  const first = alertSeen === null;
+  if (first) alertSeen = new Set();
+  const fresh = list.filter((n) => !alertSeen.has(sig(n)));
+  list.forEach((n) => alertSeen.add(sig(n)));
+  if (!$('notif-panel').hidden) loadAlerts();
+  if (first || fresh.length === 0) return;
+  // Something new since the last look.
+  const top = fresh[0];
+  toast(fresh.length === 1 ? top.title : `${fresh.length} new alerts: ${top.title}…`, top.severity === 'critical');
+  if (window.Notification && Notification.permission === 'granted' && (document.hidden || !document.hasFocus())) {
+    for (const n of fresh.slice(0, 3)) {
+      try {
+        const pop = new Notification(n.title, { body: n.detail, tag: `alert-${n.id}`, renotify: true });
+        pop.onclick = () => { window.focus(); if (n.link) navigateTo(n.link); pop.close(); };
+      } catch (_) { /* the browser refused */ }
+    }
+  }
+}
+
+function updateBell(unread) {
+  document.querySelectorAll('[data-bell-count]').forEach((el) => {
+    const was = el.textContent;
+    el.hidden = unread === 0;
+    el.textContent = unread > 99 ? '99+' : String(unread);
+    if (unread > 0 && was !== el.textContent) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+  });
+  document.querySelectorAll('[data-bell]').forEach((b) => {
+    b.setAttribute('aria-label', unread ? `Alerts, ${unread} unread` : 'Alerts');
+    b.classList.toggle('ringing', unread > 0);
+  });
+}
+
+function renderAlerts() {
+  const canPop = !IN_APP && window.Notification && Notification.permission === 'default';
+  $('notif-desktop').hidden = !canPop;
+  const { open, resolved } = alertData;
+  const item = (n, i) => `
+    <button type="button" class="notif-item sev-${n.severity}${n.read ? '' : ' unread'}" data-alert="${n.id}" data-link="${escapeHtml(n.link || '')}" style="--i:${i}">
+      <span class="notif-icon kind-${escapeHtml(n.kind)}">${ALERT_ICONS[n.kind] || ALERT_ICONS.stock}</span>
+      <span class="notif-body"><b>${escapeHtml(n.title)}</b><span class="notif-detail">${escapeHtml(n.detail)}</span><span class="notif-time">${escapeHtml(ago(n.raised_at))}</span></span>
+      ${n.read ? '' : '<i class="notif-dot" aria-label="Unread"></i>'}
+    </button>`;
+  const fixed = (n, i) => `
+    <div class="notif-item fixed" style="--i:${i + open.length}">
+      <span class="notif-icon">${ALERT_ICONS.fixed}</span>
+      <span class="notif-body"><b>${escapeHtml(n.title)}</b><span class="notif-time">Fixed ${escapeHtml(ago(n.resolved_at))}</span></span>
+    </div>`;
+  $('notif-read-all').hidden = !open.some((n) => !n.read);
+  $('notif-list').innerHTML = (open.length ? open.map(item).join('') : `<div class="notif-empty">${ALERT_ICONS.fixed}<b>All good</b><span class="small muted">Toner and stock are fine. You'll be alerted here when something runs low.</span></div>`)
+    + (resolved.length ? `<div class="notif-section">Fixed recently</div>${resolved.slice(0, 6).map(fixed).join('')}` : '');
 }

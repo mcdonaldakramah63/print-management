@@ -8,7 +8,8 @@ const PKG_ROOT = process.pkg || isSea()
   ? path.dirname(process.execPath)
   : path.join(__dirname, '..');
 
-const DB_PATH = path.join(PKG_ROOT, 'data', 'receipts.db');
+// RECEIPTS_DB points the tests at a scratch database.
+const DB_PATH = process.env.RECEIPTS_DB || path.join(PKG_ROOT, 'data', 'receipts.db');
 
 // Ensure the data folder exists
 const fs = require('fs');
@@ -380,6 +381,57 @@ CREATE INDEX IF NOT EXISTS idx_copy_events_sale ON copy_events(sale_id);
 CREATE INDEX IF NOT EXISTS idx_print_jobs_sale ON print_jobs(sale_id);
 CREATE INDEX IF NOT EXISTS idx_print_jobs_status ON print_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_print_jobs_submitted ON print_jobs(submitted_at);
+`);
+
+// ---------- Alerts for the admin ----------
+// One row per condition (a toner cartridge, a product): raised once, raised
+// again only if it gets worse, resolved when it clears.
+db.exec(`
+CREATE TABLE IF NOT EXISTS notifications (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  key          TEXT NOT NULL UNIQUE,
+  kind         TEXT NOT NULL,
+  level        INTEGER NOT NULL,
+  title        TEXT NOT NULL,
+  detail       TEXT NOT NULL DEFAULT '',
+  link         TEXT NOT NULL DEFAULT '',
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  raised_at    TEXT NOT NULL,
+  updated_at   TEXT NOT NULL,
+  read_at      TEXT,
+  resolved_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_open ON notifications(resolved_at, raised_at);
+`);
+ensureColumn('settings', 'toner_warn_pct', 'toner_warn_pct INTEGER NOT NULL DEFAULT 20');
+ensureColumn('settings', 'toner_critical_pct', 'toner_critical_pct INTEGER NOT NULL DEFAULT 10');
+
+// ---------- Job builder ----------
+// A customer's order taken at the counter (pages, copies, finishing) and
+// tracked until it is collected. Priced from the catalog; billed through a
+// normal sale, before or after it is done.
+db.exec(`
+CREATE TABLE IF NOT EXISTS jobs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_no          TEXT NOT NULL UNIQUE,
+  customer_name   TEXT NOT NULL DEFAULT '',
+  customer_phone  TEXT NOT NULL DEFAULT '',
+  title           TEXT NOT NULL DEFAULT '',
+  parts           TEXT NOT NULL DEFAULT '[]',
+  lines           TEXT NOT NULL DEFAULT '[]',
+  total           REAL NOT NULL DEFAULT 0,
+  status          TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','printing','ready','collected','cancelled')),
+  due_at          TEXT,
+  notes           TEXT NOT NULL DEFAULT '',
+  sale_id         INTEGER REFERENCES sales(id),
+  created_by      INTEGER REFERENCES users(id),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  ready_at        TEXT,
+  collected_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, due_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_sale ON jobs(sale_id);
 `);
 
 // ---------- Remote access ----------

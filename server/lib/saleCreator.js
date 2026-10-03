@@ -71,16 +71,19 @@ function isDayClosed(date) {
  * amountTendered - cash handed over (cash only, optional; must cover the total)
  * printSessionIds - client print sessions this sale bills (optional)
  * copyEventIds   - detected photocopy runs this sale bills (optional)
+ * jobIds         - job builder orders this sale pays for (optional)
  */
 function createSale({
   userId, customerName, customerPhone, items, discountType, discountValue,
-  paymentMethod, amountTendered, printSessionIds, copyEventIds
+  paymentMethod, amountTendered, printSessionIds, copyEventIds, jobIds
 }) {
   validateItems(items);
   const sessionIds = Array.isArray(printSessionIds) ? [...new Set(printSessionIds.map(Number))] : [];
   if (sessionIds.some((id) => !Number.isInteger(id))) throw new Error('Invalid print session');
   const copyIds = Array.isArray(copyEventIds) ? [...new Set(copyEventIds.map(Number))] : [];
   if (copyIds.some((id) => !Number.isInteger(id))) throw new Error('Invalid photocopy run');
+  const orderIds = Array.isArray(jobIds) ? [...new Set(jobIds.map(Number))] : [];
+  if (orderIds.some((id) => !Number.isInteger(id))) throw new Error('Invalid job');
 
   if (isDayClosed(localDateString())) {
     throw new Error('Today has already been closed. An admin must reopen it in Reports before more sales can be recorded.');
@@ -137,6 +140,14 @@ function createSale({
     UPDATE copy_events SET status = 'billed', sale_id = ?, billed_at = datetime('now') WHERE id = ? AND status = 'open'
   `);
 
+  // A job is paid for once; one that is ready is handed over with the sale.
+  const linkJob = db.prepare(`
+    UPDATE jobs SET sale_id = ?, updated_at = datetime('now'),
+      collected_at = CASE WHEN status = 'ready' THEN datetime('now') ELSE collected_at END,
+      status = CASE WHEN status = 'ready' THEN 'collected' ELSE status END
+    WHERE id = ? AND sale_id IS NULL AND status != 'cancelled'
+  `);
+
   let receiptNo;
   const saleId = db.transaction(() => {
     // Generated inside the transaction so the number and the insert are atomic.
@@ -162,6 +173,9 @@ function createSale({
     }
     for (const copyId of copyIds) {
       if (linkCopies.run(id, copyId).changes === 0) throw new Error('Those photocopies were already billed or dismissed');
+    }
+    for (const jobId of orderIds) {
+      if (linkJob.run(id, jobId).changes === 0) throw new Error('That job was already paid for or was cancelled');
     }
     return id;
   })();

@@ -14,7 +14,12 @@ router.put('/', requireAdmin, (req, res) => {
     business_name, address, phone, email,
     logo_data_url, tax_rate, currency, footer_note, receipt_prefix
   } = req.body;
-  const current = db.prepare('SELECT reorder_lead_days, reorder_cover_days FROM settings WHERE id = 1').get();
+  const current = db.prepare('SELECT reorder_lead_days, reorder_cover_days, toner_warn_pct, toner_critical_pct FROM settings WHERE id = 1').get();
+  const tonerWarn = req.body.toner_warn_pct === undefined ? current.toner_warn_pct : Number(req.body.toner_warn_pct);
+  const tonerCritical = req.body.toner_critical_pct === undefined ? current.toner_critical_pct : Number(req.body.toner_critical_pct);
+  if (!Number.isInteger(tonerWarn) || !Number.isInteger(tonerCritical) || tonerCritical < 1 || tonerWarn > 90 || tonerCritical >= tonerWarn) {
+    return res.status(400).json({ error: 'Toner alerts: "replace" must be below "running low", both between 1 and 90%' });
+  }
   const leadDays = req.body.reorder_lead_days === undefined ? current.reorder_lead_days : Number(req.body.reorder_lead_days);
   const coverDays = req.body.reorder_cover_days === undefined ? current.reorder_cover_days : Number(req.body.reorder_cover_days);
   if (!Number.isInteger(leadDays) || leadDays < 1 || leadDays > 90 || !Number.isInteger(coverDays) || coverDays < 1 || coverDays > 180) {
@@ -38,13 +43,14 @@ router.put('/', requireAdmin, (req, res) => {
     UPDATE settings SET
       business_name = ?, address = ?, phone = ?, email = ?,
       logo_data_url = ?, tax_rate = ?, currency = ?, footer_note = ?, receipt_prefix = ?,
-      reorder_lead_days = ?, reorder_cover_days = ?
+      reorder_lead_days = ?, reorder_cover_days = ?, toner_warn_pct = ?, toner_critical_pct = ?
     WHERE id = 1
   `).run(
     business_name.trim(), address || '', phone || '', email || '',
     logo_data_url || '', rate, currency || 'GHS', footer_note || '', receipt_prefix || 'RCT',
-    leadDays, coverDays
+    leadDays, coverDays, tonerWarn, tonerCritical
   );
+  require('../lib/notifications').soon(200);
 
   res.json({ ok: true });
 });

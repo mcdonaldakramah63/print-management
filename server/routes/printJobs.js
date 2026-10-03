@@ -160,6 +160,7 @@ router.post('/supplies', requireAgent, (req, res) => {
     db.prepare("DELETE FROM supply_readings WHERE read_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-180 days')").run();
     db.prepare("DELETE FROM device_counters WHERE read_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-180 days')").run();
   })();
+  require('../lib/notifications').soon();
   res.json({ ok: true, stored });
 });
 

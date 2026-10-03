@@ -177,3 +177,17 @@ table.r-items th.num, table.r-items td.num { text-align: right; }
     margin: 0;
   }
 }
+
+/* Job ticket */
+.j-no { font-family: var(--mono); font-size: 22px; font-weight: 600; letter-spacing: 0.02em; margin-top: 2px; }
+.j-due { font-size: 13px; font-weight: 700; }
+.j-checklist { list-style: none; margin: 0; padding: 0; font-size: 11.5px; }
+.j-checklist li { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.j-box { flex: none; width: 12px; height: 12px; border: 1.5px solid var(--ink); border-radius: 2px; margin-top: 1px; }
+.j-how { color: var(--ink-soft); font-size: 10.5px; margin-top: 1px; }
+.j-notes { font-size: 11px; white-space: pre-wrap; border-left: 2px solid var(--ink); padding-left: 8px; }
+.j-stub { margin-top: auto; padding-top: 18px; }
+.j-cut { font-size: 9.5px; color: var(--ink-soft); border-top: 1.5px dashed var(--ink-soft); padding-top: 4px; margin-bottom: 8px; }
+.j-stub-body { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 10.5px; line-height: 1.5; }
+.j-stub-shop { font-family: var(--serif); font-size: 12px; font-weight: 600; }
+.j-stub-no { font-size: 26px; border: 2px solid var(--ink); padding: 4px 10px; border-radius: 4px; }
