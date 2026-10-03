@@ -1,17 +1,22 @@
-# One-click relay on Render (https://render.com): New > Blueprint > this repo.
+# One-click relay on Render (https://render.com): New > Blueprint > this repo,
+# or the "Deploy to Render" link in relay/README.md.
 # Render asks for RELAY_KEY: make up a long random value and enter the same
-# key on the shop PC in Settings > Remote access.
+# key on the shop PC in Settings > Remote access and phone app.
 services:
   - type: web
     name: receipt-relay
     runtime: node
+    region: frankfurt
+    plan: free
     rootDir: relay
-    buildCommand: "true"
+    buildCommand: echo "The relay has no dependencies"
     startCommand: node relay.js
     healthCheckPath: /healthz
-    plan: free
+    autoDeploy: false
     envVars:
       - key: RELAY_KEY
         sync: false
       - key: TRUST_PROXY
         value: "1"
+      - key: NODE_VERSION
+        value: "22"

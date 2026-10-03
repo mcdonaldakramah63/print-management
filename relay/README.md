@@ -8,7 +8,8 @@ One file, no dependencies, Node 18+.
 
 ## Run it
 
-**Render (free):** New > Blueprint > this repository. `render.yaml` sets it
+**Render (free):** [Deploy to Render](https://render.com/deploy?repo=https://github.com/mcdonaldakramah63/print-management),
+or New > Blueprint > this repository. `render.yaml` sets it
 up; enter a long random `RELAY_KEY` when asked. Your relay address is the
 `https://….onrender.com` URL Render shows. (The free plan sleeps when idle,
 but the shop's link keeps it awake while the shop PC is on.)
