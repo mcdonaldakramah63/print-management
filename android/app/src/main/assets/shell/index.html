@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Receipt Admin</title>
+<link rel="stylesheet" href="shell.css">
+</head>
+<body data-screen="home">
+<div class="ink-field" aria-hidden="true"><i class="c"></i><i class="m"></i><i class="y"></i></div>
+<div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg></div>
+
+<!-- ============ Shops ============ -->
+<section class="screen active" id="screen-home" aria-labelledby="home-title">
+  <header class="brand">
+    <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="9.5" fill="none" stroke="#1B1E24" stroke-width="2.4"/><path d="M18 2v32M2 18h32" stroke="#1B1E24" stroke-width="2.4"/><circle cx="18" cy="18" r="4.2" fill="#D6167A"/></svg></span>
+    <div style="flex:1;min-width:0;"><h1 id="home-title">Receipt Admin</h1><div class="brand-sub">Your shops, from anywhere</div></div>
+    <button class="icon-btn" id="refresh-all" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg></button>
+  </header>
+  <div class="cmyk-bar printing" aria-hidden="true"><span class="c"></span><span class="m"></span><span class="y"></span><span class="k"></span></div>
+
+  <div id="empty" class="card stack hero" hidden>
+    <svg class="hero-mark" viewBox="0 0 36 36" aria-hidden="true"><circle class="ring" cx="18" cy="18" r="9.5" fill="none" stroke="#1B1E24" stroke-width="2.2" pathLength="64"/><path class="cross" d="M18 2v32M2 18h32" stroke="#1B1E24" stroke-width="2.2" pathLength="40"/><circle class="dotm" cx="18" cy="18" r="4.2" fill="#D6167A"/></svg>
+    <h2>Connect your shop</h2>
+    <p class="muted">See today's sales, printers and alerts, and run every admin page, wherever you are.</p>
+    <ol class="steps">
+      <li>On the shop PC, open <b>Settings &gt; Remote access and phone app</b>.</li>
+      <li>Scan the QR code with this phone's camera and tap <b>Open in Receipt Admin</b>.</li>
+    </ol>
+    <button class="btn btn-primary btn-block" type="button" data-go="add">Paste a connection code</button>
+  </div>
+
+  <div id="shop-list" class="stack" style="gap:12px;"></div>
+  <button class="btn btn-ghost btn-block" type="button" id="add-btn" data-go="add" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add a shop</button>
+  <p class="foot" id="version"></p>
+</section>
+
+<!-- ============ Add a shop ============ -->
+<section class="screen" id="screen-add" aria-labelledby="add-title">
+  <header class="topbar">
+    <button class="icon-btn" type="button" data-back aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <h1 id="add-title">Add a shop</h1>
+  </header>
+  <div class="card stack">
+    <h2>Scan, or paste</h2>
+    <ol class="steps">
+      <li>On the shop PC open <b>Settings &gt; Remote access and phone app</b>.</li>
+      <li>Scan the QR code with this phone's camera and tap <b>Open in Receipt Admin</b>, or copy the <b>connection code</b> and paste it below.</li>
+    </ol>
+    <label for="code" class="muted small">Connection code, pairing link or the shop's address</label>
+    <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="eyJ1Ijoi…  or  http://192.168.1.20:3000"></textarea>
+    <div class="error-text" id="add-error" role="alert" hidden></div>
+    <div class="row">
+      <button class="btn btn-ghost" type="button" id="paste-btn">Paste</button>
+      <button class="btn btn-primary" type="button" id="connect-btn" style="flex:1;">Connect</button>
+    </div>
+  </div>
+  <p class="muted small" style="padding:0 4px;">A plain address (like http://192.168.1.20:3000) opens the shop on its Wi-Fi only, without the offline summary or alerts. Pair with the QR code for those.</p>
+</section>
+
+<!-- ============ One shop ============ -->
+<section class="screen" id="screen-shop" aria-labelledby="shop-title">
+  <header class="topbar">
+    <button class="icon-btn" type="button" data-back aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <h1 id="shop-title">Shop</h1>
+    <button class="icon-btn" type="button" id="shop-menu" aria-label="Shop options"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
+  </header>
+  <div id="shop-banner"></div>
+  <button class="btn btn-primary btn-lg btn-block" type="button" id="open-full">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/></svg>Open full admin</button>
+  <div id="shop-body" class="stack" style="gap:14px;"></div>
+</section>
+
+<div id="overlay-root"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="shell.js"></script>
+</body>
+</html>

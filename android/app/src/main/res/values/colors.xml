@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="stock">#EEF2F6</color>
+    <color name="sheet">#FFFFFF</color>
+    <color name="key">#1B1E24</color>
+    <color name="cyan">#0068A3</color>
+    <color name="magenta">#D6167A</color>
+    <color name="icon_bg">#FFFFFF</color>
+</resources>

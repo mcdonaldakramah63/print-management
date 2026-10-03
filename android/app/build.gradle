@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+}
+
+// CI passes the run number so every build installs over the last one.
+def buildNumber = (System.getenv('VERSION_CODE') ?: '1') as int
+
+android {
+    namespace 'com.receiptsystem.admin'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.receiptsystem.admin'
+        minSdk 26
+        targetSdk 34
+        versionCode buildNumber
+        versionName "1.0.${buildNumber}"
+    }
+
+    signingConfigs {
+        // Sideload key committed with the project, so anyone building the app
+        // produces APKs that update each other. For your own key, set
+        // RELEASE_KEYSTORE (path), RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS
+        // and RELEASE_KEY_PASSWORD (see android/README.md).
+        sideload {
+            storeFile file('../sideload.keystore')
+            storePassword 'receiptadmin'
+            keyAlias 'receiptadmin'
+            keyPassword 'receiptadmin'
+        }
+        if (System.getenv('RELEASE_KEYSTORE')) {
+            own {
+                storeFile file(System.getenv('RELEASE_KEYSTORE'))
+                storePassword System.getenv('RELEASE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('RELEASE_KEY_ALIAS')
+                keyPassword System.getenv('RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig System.getenv('RELEASE_KEYSTORE') ? signingConfigs.own : signingConfigs.sideload
+        }
+        debug {
+            signingConfig signingConfigs.sideload
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

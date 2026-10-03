@@ -46,6 +46,15 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   $('nav-avatar').textContent = initials(currentUser.full_name || currentUser.username);
 
   if (!isAdmin()) document.querySelectorAll('.admin-only').forEach((el) => el.remove());
+  // Inside the Receipt Admin phone app: a way back to the list of shops.
+  if (window.ReceiptApp && typeof window.ReceiptApp.home === 'function') {
+    const shopsBtn = document.createElement('button');
+    shopsBtn.type = 'button';
+    shopsBtn.className = 'btn-side';
+    shopsBtn.textContent = 'Shops';
+    shopsBtn.addEventListener('click', () => window.ReceiptApp.home());
+    $('logout-btn').before(shopsBtn);
+  }
 
   await loadSettings();
   await loadCatalog();

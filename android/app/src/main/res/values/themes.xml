@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ReceiptAdmin" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/cyan</item>
+        <item name="android:colorAccent">@color/cyan</item>
+        <item name="android:windowBackground">@color/stock</item>
+        <item name="android:statusBarColor">@color/stock</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/key</item>
+    </style>
+</resources>

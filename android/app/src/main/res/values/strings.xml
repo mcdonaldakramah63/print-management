@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Receipt Admin</string>
+    <string name="channel_alerts">Shop alerts</string>
+    <string name="channel_alerts_desc">Printers that stop, risk alerts, toner and stock running out</string>
+</resources>
