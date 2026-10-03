@@ -4,18 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sign in · Receipt System</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preload" href="fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <main class="login-page">
     <form class="card login-card" id="login-form">
       <div class="row" style="gap:12px; flex-wrap:nowrap;">
-        <span class="brand-mark" aria-hidden="true">R</span>
-        <div><h1 style="font-size:22px;">Receipt System</h1><p class="muted" style="margin:2px 0 0;">Sign in to record and print sales</p></div>
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M18 2v32M2 18h32" stroke="currentColor" stroke-width="2.4"/><circle cx="18" cy="18" r="4.2" fill="#D6167A"/></svg></span>
+        <div><h1>Receipt System</h1><p class="muted" style="margin:2px 0 0;">Sign in to ring up sales and run the printers</p></div>
       </div>
+      <div class="cmyk-bar printing" aria-hidden="true"><span class="c"></span><span class="m"></span><span class="y"></span><span class="k"></span></div>
       <div class="field">
         <label for="username">Username</label>
         <input id="username" name="username" autocomplete="username" required autofocus>

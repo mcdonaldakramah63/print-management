@@ -7,6 +7,7 @@ let catalog = [];          // active products, for the checkout
 let cart = [];             // [{ key, product_id, name, unit_price, qty, session_id? }]
 let cartSessions = new Map(); // print session id -> label, billed by this sale
 let cartCopies = new Map();   // photocopy run id -> label, billed by this sale
+let cartMotion = null;        // { key, kind: 'new' | 'bump' } for the next cart render
 let cartKey = 0;
 let payMethod = 'cash';
 let catalogCategory = 'All';
@@ -99,11 +100,18 @@ $('logout-btn').addEventListener('click', async () => {
 // ---------------------------------------------------------------
 // Small UI helpers: toasts, modals, errors
 // ---------------------------------------------------------------
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Toasts rise in with a dwell bar; hovering pauses them. Errors are announced
+// assertively, shake once and stay longer (feedback-indicators skill).
 function toast(message, isError) {
   const el = document.createElement('div');
+  const dwell = isError ? 7000 : 4500;
   el.className = `toast${isError ? ' error' : ''}`;
-  el.setAttribute('role', 'status');
-  el.textContent = message;
+  el.setAttribute('role', isError ? 'alert' : 'status');
+  el.style.setProperty('--dwell', `${dwell}ms`);
+  el.innerHTML = `<svg class="toast-icon" viewBox="0 0 24 24" aria-hidden="true">${isError ? '<path d="M12 7v6M12 17h.01"/>' : '<path d="M5 12.5l4.5 4.5L19 7.5"/>'}</svg><span></span><span class="toast-dwell" aria-hidden="true"></span>`;
+  el.children[1].textContent = message;
   let stack = document.querySelector('.toast-stack');
   if (!stack) {
     stack = document.createElement('div');
@@ -111,7 +119,17 @@ function toast(message, isError) {
     document.body.appendChild(stack);
   }
   stack.appendChild(el);
-  setTimeout(() => el.remove(), 4500);
+  let left = dwell;
+  let started = Date.now();
+  let timer = null;
+  const leave = () => {
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), reduceMotion() ? 0 : 160);
+  };
+  const run = () => { started = Date.now(); timer = setTimeout(leave, left); };
+  el.addEventListener('mouseenter', () => { clearTimeout(timer); left -= Date.now() - started; });
+  el.addEventListener('mouseleave', run);
+  run();
 }
 
 function showError(el, message) {
@@ -146,7 +164,10 @@ function openModal({ title, body, submitLabel = 'Save', danger = false, wide = f
   const close = (submitted) => {
     if (closed) return;
     closed = true;
-    root.innerHTML = '';
+    // Exit runs at ~60% of the entrance; the dialog is gone for input at once.
+    backdrop.classList.add('closing');
+    backdrop.style.pointerEvents = 'none';
+    setTimeout(() => { if (backdrop.parentNode === root) root.innerHTML = ''; }, reduceMotion() ? 0 : 180);
     if (onClose) onClose(!!submitted);
     if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
   };
@@ -573,7 +594,13 @@ function renderCatalog() {
       <span class="t-meta"><span class="t-price">${escapeHtml(cur(p.price))}</span><span class="t-stock${low ? ' low' : ''}">${escapeHtml(stock)}</span></span>
     </button>`;
   }).join('');
-  tiles.querySelectorAll('.tile').forEach((t) => t.addEventListener('click', () => {
+  tiles.querySelectorAll('.tile').forEach((t) => t.addEventListener('click', (e) => {
+    const r = t.getBoundingClientRect();
+    t.style.setProperty('--ink-x', `${(e.clientX || r.left + r.width / 2) - r.left}px`);
+    t.style.setProperty('--ink-y', `${(e.clientY || r.top + r.height / 2) - r.top}px`);
+    t.classList.remove('inked');
+    void t.offsetWidth; // restart the ink drop on every tap
+    t.classList.add('inked');
     addToCart(catalog.find((p) => p.id === Number(t.dataset.id)));
   }));
 }
@@ -581,8 +608,13 @@ function renderCatalog() {
 function addToCart(product) {
   if (!product) return;
   const line = cart.find((l) => l.product_id === product.id && l.unit_price === product.price && !l.session_id && !l.copy_id);
-  if (line) line.qty = round2(line.qty + 1);
-  else cart.push({ key: ++cartKey, product_id: product.id, name: product.name, unit_price: product.price, qty: 1 });
+  if (line) {
+    line.qty = round2(line.qty + 1);
+    cartMotion = { key: line.key, kind: 'bump' };
+  } else {
+    cart.push({ key: ++cartKey, product_id: product.id, name: product.name, unit_price: product.price, qty: 1 });
+    cartMotion = { key: cartKey, kind: 'new' };
+  }
   renderCart();
 }
 
@@ -692,8 +724,10 @@ function renderCart() {
   if (cart.length === 0) {
     wrap.innerHTML = '<p class="muted" style="text-align:center; margin:0; padding:24px 0;">Tap a product to add it.</p>';
   } else {
+    const motion = cartMotion;
+    cartMotion = null;
     wrap.innerHTML = cart.map((l) => `
-      <div class="cart-line">
+      <div class="cart-line${motion && motion.key === l.key ? (motion.kind === 'new' ? ' is-new' : ' is-bumped') : ''}">
         <div style="min-width:0;">
           ${l.product_id
             ? `<div style="font-weight:500;">${escapeHtml(l.name)}</div>`
@@ -765,12 +799,31 @@ function computeTotals() {
   return { subtotal, discount, tax, total };
 }
 
+// Money that changes counts to its new value instead of jumping; a new
+// change cancels the old tween, and the final text is always exact.
+const tweens = new WeakMap();
+function tweenMoney(el, value) {
+  const from = Number(el.dataset.value);
+  el.dataset.value = String(value);
+  const prev = tweens.get(el);
+  if (prev) cancelAnimationFrame(prev);
+  if (!Number.isFinite(from) || from === value || reduceMotion() || document.hidden) { el.textContent = cur(value); return; }
+  const start = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - start) / 240);
+    const eased = 1 - (1 - k) ** 3;
+    el.textContent = cur(round2(from + (value - from) * eased));
+    if (k < 1) tweens.set(el, requestAnimationFrame(step)); else { el.textContent = cur(value); tweens.delete(el); }
+  };
+  tweens.set(el, requestAnimationFrame(step));
+}
+
 function renderTotals() {
   const t = computeTotals();
   $('calc-subtotal').textContent = cur(t.subtotal);
   $('calc-discount').textContent = `− ${cur(t.discount)}`;
   $('calc-tax').textContent = cur(t.tax);
-  $('calc-total').textContent = cur(t.total);
+  tweenMoney($('calc-total'), t.total);
 
   const tenderedRaw = $('amount-tendered').value;
   const box = $('change-box');
@@ -831,6 +884,10 @@ async function completeSale() {
   try {
     const result = await api('POST', '/api/sales', payload);
     tab.go(`receipt.html?id=${result.id}`);
+    const label = btn.innerHTML;
+    btn.classList.add('btn-done');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Sale recorded';
+    setTimeout(() => { btn.classList.remove('btn-done'); btn.innerHTML = label; }, reduceMotion() ? 600 : 1100);
     resetSale();
     toast(result.change_due != null
       ? `Sale ${result.receipt_no} recorded. Change due: ${cur(result.change_due)}`
@@ -1112,6 +1169,7 @@ function setupPrinters() {
 function updatePrinterBadge(printers) {
   const bad = printers.filter((p) => p.health === 'error' || p.health === 'offline').length;
   const el = $('printer-alert-count');
+  if (el.textContent !== String(bad) && bad > 0) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
   el.hidden = bad === 0;
   el.textContent = String(bad);
   el.title = `${plural(bad, 'printer')} need attention`;
@@ -1293,7 +1351,7 @@ function printerCard(p, { detail = false } = {}) {
         ${issueListHtml(p)}
         ${detail ? '' : `<div class="stack" style="gap:8px;"><div class="mini-label">Queue${p.queue.length ? ` · ${p.queue.length}` : ''}</div>${queueTableHtml(p)}</div>`}
         ${controlsHtml(p)}
-        ${!detail && cfg ? `<div class="row" style="gap:10px; flex-wrap:wrap; align-items:center;"><span class="muted small">Defaults: ${escapeHtml(DUPLEX_LABEL[cfg.duplex] || cfg.duplex || '?')} · ${cfg.color ? 'colour' : 'black &amp; white'} · ${escapeHtml(cfg.paper_size || '?')}</span><a class="small" href="${printerHref(p)}">All features and settings &rarr;</a></div>` : ''}
+        ${!detail && cfg ? `<div class="row" style="gap:10px; flex-wrap:wrap; align-items:center;"><span class="muted small">Defaults: ${escapeHtml(DUPLEX_LABEL[cfg.duplex] || cfg.duplex || '?')} · ${cfg.color ? 'colour' : 'black &amp; white'} · ${escapeHtml(cfg.paper_size || '?')}</span><a class="small" href="${printerHref(p)}">All features and settings</a></div>` : ''}
       </div>
     </div>
   </article>`;
@@ -1566,9 +1624,21 @@ const detailState = { agentId: null, name: '', tab: 'overview', data: null, sig:
 function setupPrinterDetail() {
   wireGoLinks($('view-printer'));
   const tabs = [...$('printer-tabs').querySelectorAll('[role="tab"]')];
+  const ink = document.createElement('span');
+  ink.className = 'tab-ink';
+  ink.setAttribute('aria-hidden', 'true');
+  $('printer-tabs').appendChild(ink);
+  $('printer-tabs').classList.add('has-ink');
+  const placeInk = () => {
+    const on = tabs.find((t) => t.getAttribute('aria-selected') === 'true');
+    if (on && on.offsetWidth) ink.style.transform = `translateX(${on.offsetLeft}px) scaleX(${on.offsetWidth})`;
+  };
+  window.addEventListener('resize', placeInk);
+  new MutationObserver(placeInk).observe($('view-printer'), { attributes: true, attributeFilter: ['class'] });
   const select = (tab, focus) => {
     detailState.tab = tab.dataset.tab;
     tabs.forEach((t) => { const on = t === tab; t.setAttribute('aria-selected', on); t.tabIndex = on ? 0 : -1; });
+    placeInk();
     $('printer-panel').setAttribute('aria-labelledby', tab.id);
     if (focus) tab.focus();
     renderPrinterDetail(true);
