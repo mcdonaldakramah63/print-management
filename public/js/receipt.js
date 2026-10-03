@@ -13,7 +13,7 @@ const PAY_LABELS = { cash: 'Cash', momo: 'Mobile money', card: 'Card' };
   let me, settingsRes, saleRes;
   try {
     me = await api('GET', '/api/auth/me');
-    if (!me.user) { window.location.href = 'login.html'; return; }
+    if (!me.user) { window.location.replace('login.html'); return; }
     settingsRes = await api('GET', '/api/settings');
     saleRes = await api('GET', `/api/sales/${id}`);
   } catch (err) {

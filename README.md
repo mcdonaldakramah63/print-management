@@ -5,6 +5,8 @@ Built with Node.js, Express, and SQLite — no external database server to set u
 
 **On Windows?** There's a standalone app, `ReceiptSystem.exe`, that needs no Node.js install: download the `ReceiptSystem-win-x64` artifact from the latest "Windows app" GitHub Actions run, or build it with `npm run build:exe`. See [`WINDOWS-SETUP.md`](./WINDOWS-SETUP.md).
 
+**Away from the shop?** Turn on **Settings > Remote access and phone app** and install the **Receipt Admin** Android app (the `ReceiptAdmin-android` artifact from the latest "Android app" GitHub Actions run). See [Remote access and the phone app](#remote-access-and-the-phone-app).
+
 ## Features
 
 - **Checkout** — a product grid with category filters, search and barcode/SKU entry (type or scan the SKU and press Enter); a cart with quantity steppers and per-line price overrides; custom one-off items; flat or % discount; tax from settings. Choose **cash, mobile money or card**; for cash, enter the amount tendered and the change due is shown and printed on the receipt. Optional customer name and phone.
@@ -84,6 +86,67 @@ password: admin123   (or whatever DEFAULT_ADMIN_PASSWORD you set in .env)
 8. **Print monitor** (admin) — register an agent for each printer-connected PC and install it there (see `agent/README.md`). Every finished print job then shows up in the log.
 9. **Printed vs sold** (admin) — once your print products are marked as colour/B&W print services, compare pages printed with pages sold each day.
 
+## Remote access and the phone app
+
+The admin can follow the shop and use every admin page from anywhere, on a
+phone or any browser, without port forwarding or a fixed IP address.
+
+```
+ shop PC (Receipt System) ──connects out──▶  relay  ◀── phone app / browser
+   long-polls for requests                (relay/)     https://relay/s/<shop>/
+   pushes an encrypted snapshot every 2 min
+```
+
+1. **Run a relay** (once). It is a single dependency-free Node file,
+   [`relay/relay.js`](relay/README.md). Free on Render: *New > Blueprint*, pick
+   this repository (it reads `render.yaml`), and enter a long random
+   `RELAY_KEY`. Or run `docker build -t relay relay && docker run -p 8080:8080 -e RELAY_KEY=… relay`
+   on any server behind HTTPS.
+2. **On the shop PC**, sign in as admin, change the default password
+   (remote access stays off until you do), then open **Settings > Remote
+   access and phone app**: enter the relay address and key, switch on
+   *Allow admins to connect from anywhere*, and save. The status turns
+   *Connected*.
+3. **On the phone**, install Receipt Admin (allow installs from your browser
+   or file manager), then scan the QR code shown in Settings with the
+   phone's camera and tap *Open in Receipt Admin*. Sign in with your admin
+   account; the app keeps you signed in for 30 days. Without the app, open
+   the shop link in any browser.
+
+**What the app does**
+
+- **Full admin**: the shop's own web app, so every feature (sales, reports
+  and Z-reports, printers and remote printer control, print monitor,
+  printed vs sold, products, users, settings) is there and always current.
+  Receipts and reports print through Android's print service, CSV exports
+  download, the logo upload works. Phones get a drawer menu.
+- **Summary that works when the shop PC is off**: today's sales against
+  yesterday, the week and month, a 14-day chart, payment mix, cashiers,
+  printers and their problems, toner, low stock, risk alerts. It comes from
+  a snapshot the shop sends every 2 minutes, **encrypted end to end**
+  (AES-256-GCM) with a key that only reaches phones through the QR code's
+  `#fragment`: the relay stores ciphertext it can't read.
+- **Alerts**: every 15 minutes the phone checks each paired shop and
+  notifies once per new problem: a printer that stopped, a high-risk alert,
+  toner or stock running out.
+- **Several shops**: pair as many as you like. A plain address such as
+  `http://192.168.1.20:3000` also works, on the shop Wi-Fi only.
+
+**Security**
+
+- Only **admin** accounts can sign in from outside the shop, never with the
+  default password, and failed sign-ins lock the account for a while
+  (remote and in-shop attempts are counted separately, so internet guessing
+  can't lock out the counter).
+- The relay only accepts shops that know `RELAY_KEY`, and each shop's link
+  secret is pinned on first contact. Use an `https://` relay address.
+- Turning remote access off, or **Reset pairing** (new shop address and
+  keys: every phone must scan again), can only be done at the shop.
+- Sessions are kept in the database, so a restart doesn't sign anyone out.
+
+Building the app yourself, and signing it with your own key:
+[`android/README.md`](android/README.md).
+
 ## Print monitoring architecture
 
 This is a detection log, not a billing engine — an earlier version of this feature auto-created sales from print jobs, but that's been removed. Nothing here creates, edits, or affects a sale; it exists purely so an admin can see what was printed and compare it against what was rung up.
@@ -127,6 +190,10 @@ receipt-system/
 │   │   ├── stock.js        Stock changes + stock history log
 │   │   ├── printAnalysis.js Pages x copies, document coverage, client sessions
 │   │   └── insights/       Forecast, risk, stock, baskets, matching, customers, traffic, product mix, supplies
+│   │   ├── remoteLink.js   Outbound link to the relay (long polling)
+│   │   ├── pulse.js        Status snapshot for phones, AES-256-GCM
+│   │   ├── loginGuard.js   Failed sign-in limits
+│   │   ├── sessionStore.js Sessions in SQLite
 │   │   ├── dates.js        Local business-date helpers
 │   │   └── csv.js          CSV export helper
 │   └── routes/
@@ -141,6 +208,7 @@ receipt-system/
 │       ├── reports.js       Date-range reports, CSV export, end-of-day close
 │       ├── printSessions.js Client print sessions (admin view + checkout list)
 │       ├── insights.js      Forecast, risk, stock outlook, suggestions
+│       ├── remote.js        Remote access settings, encrypted snapshot (/__pulse)
 │       └── reconciliation.js Pages printed vs pages sold
 ├── public/
 │   ├── login.html
@@ -166,6 +234,8 @@ receipt-system/
 │   └── test/                  SNMP, photocopy and printer-control tests (simulated printer)
 │   ├── config.example.json
 │   └── README.md              Agent-specific setup & troubleshooting
+├── relay/                   Relay for remote access (no dependencies; Dockerfile, test)
+├── android/                 Receipt Admin, the Android app (Java, no libraries)
 ├── scripts/build-exe.js     Builds ReceiptSystem.exe + PrintMonitorAgent.exe (Node SEA)
 ├── windows/                 install.bat / start.bat / build.bat (standalone .exe, see WINDOWS-SETUP.md)
 ├── data/                    SQLite database lives here (created on first run)
@@ -178,7 +248,8 @@ receipt-system/
 - Put this behind HTTPS (e.g. behind Nginx or a platform like Render/Railway/a VPS) — login cookies should never travel over plain HTTP.
 - Set a strong, random `SESSION_SECRET` in production.
 - Back up the `data/receipts.db` file regularly — it's the entire database.
-- If you expect many concurrent users, consider swapping the default in-memory session store for a persistent one (e.g. `connect-sqlite3`); fine as-is for a single small shop/team.
+- Sessions are stored in the SQLite database, so they survive restarts.
+- To reach the shop from outside, use the relay ([Remote access](#remote-access-and-the-phone-app)) rather than opening a port on the router.
 
 ## Customizing the receipt
 

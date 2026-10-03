@@ -5,7 +5,7 @@
   let settings, data;
   try {
     const me = await api('GET', '/api/auth/me');
-    if (!me.user) { window.location.href = 'login.html'; return; }
+    if (!me.user) { window.location.replace('login.html'); return; }
     settings = (await api('GET', '/api/settings')).settings;
     data = await api('GET', `/api/reports/close?date=${encodeURIComponent(date)}`);
   } catch (err) {

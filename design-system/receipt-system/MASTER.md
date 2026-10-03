@@ -147,6 +147,19 @@ bars grow in, meters fill, table rows arrive in a 35 ms stagger; feature
 icons tilt on hover; a CMYK ink splash bursts from the button when a sale
 completes; hovering the logo re-prints the colour bar.
 
+## Phones and the Receipt Admin app
+
+- Under 820 px the sidebar becomes a drawer behind a menu button in a
+  sticky glass top bar that names the page (drawer in 240 ms ease-out, out
+  in 160 ms ease-in, dimmed scrim, Escape closes, focus moves in and back).
+- The Android app's own screens (`android/app/src/main/assets/shell`) use
+  the same tokens, Archivo and the CMYK bar: shop cards with counting
+  totals and a breathing online dot, screens slide 24 px (forward right,
+  back left), bottom sheets rise, pull to refresh, a printing colour bar
+  while a shop opens, and the empty state draws the registration mark.
+- Status speaks in inks: online green, offline magenta, no connection
+  amber; a summary from a saved update always says how old it is.
+
 ## Checklist before shipping (ui-ux-pro-max)
 
 - Contrast 4.5:1 for text; focus visible on every control.

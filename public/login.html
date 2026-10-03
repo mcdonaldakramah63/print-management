@@ -45,7 +45,7 @@
           password: document.getElementById('password').value,
           remember: document.getElementById('remember').checked
         });
-        window.location.href = 'app.html';
+        window.location.replace('app.html');
       } catch (err) {
         errorEl.textContent = err.message;
         errorEl.hidden = false;
@@ -58,7 +58,7 @@
     document.getElementById('remember').checked = IN_APP;
     api('GET', '/api/auth/me').then((data) => {
       if (data.remote) document.getElementById('default-hint').hidden = true;
-      if (data.user) window.location.href = 'app.html';
+      if (data.user) window.location.replace('app.html');
     }).catch(() => { /* stay on the login form */ });
   </script>
 </body>

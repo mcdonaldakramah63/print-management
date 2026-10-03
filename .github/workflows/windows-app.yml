@@ -61,6 +61,15 @@ jobs:
           if (-not (Test-Path "$dir/data/receipts.db")) { throw 'Database was not created beside the exe' }
           Write-Host "Server OK: sale $($sale.receipt_no)"
 
+          # Remote access: settings, encrypted snapshot, pairing page.
+          $remote = Invoke-RestMethod "$base/api/remote" -WebSession $s
+          if ($remote.pulse_key.Length -ne 43) { throw 'No pairing key' }
+          $pulse = Invoke-RestMethod "$base/__pulse"
+          if ($pulse.alg -ne 'A256GCM' -or -not $pulse.data) { throw 'No encrypted snapshot' }
+          if ((Invoke-WebRequest "$base/connect.html" -UseBasicParsing).StatusCode -ne 200) { throw 'connect.html missing' }
+          if ((Invoke-WebRequest "$base/js/vendor/qrcode.js" -UseBasicParsing).StatusCode -ne 200) { throw 'QR library missing' }
+          Write-Host 'Remote access endpoints OK'
+
           # Agent: register, configure, run, and check it reports in.
           $agent = Invoke-RestMethod -Method Post "$base/api/agents" -WebSession $s -ContentType $json -Body '{"label":"CI runner"}'
           @{ backendUrl = $base; agentApiKey = $agent.api_key; heartbeatIntervalMs = 2000; readSupplies = $false; controlIdleIntervalMs = 2000 } |

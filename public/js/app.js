@@ -37,7 +37,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     me = { user: null };
   }
   if (!me.user) {
-    window.location.href = 'login.html';
+    window.location.replace('login.html');
     return;
   }
   currentUser = me.user;
@@ -104,7 +104,7 @@ async function loadCatalog() {
 
 $('logout-btn').addEventListener('click', async () => {
   try { await api('POST', '/api/auth/logout'); } catch (_) { /* leaving anyway */ }
-  window.location.href = 'login.html';
+  window.location.replace('login.html');
 });
 
 // ---------------------------------------------------------------
@@ -411,7 +411,10 @@ function navigateTo(target) {
   document.body.dataset.view = view;
   const link = document.querySelector(`.nav-link[data-view="${navView}"]`);
   $('mobile-title').textContent = link ? link.textContent.trim() : 'Receipt System';
-  if (decodeURIComponent(location.hash.replace('#', '')) !== route) location.hash = route;
+  // The first route replaces the bare app.html entry, so Back leaves the app
+  // (or, in the phone app, returns to the shop list) instead of landing on it.
+  if (!location.hash) history.replaceState(null, '', `#${route}`);
+  else if (decodeURIComponent(location.hash.replace('#', '')) !== route) location.hash = route;
   window.scrollTo(0, 0);
 
   const loaders = {

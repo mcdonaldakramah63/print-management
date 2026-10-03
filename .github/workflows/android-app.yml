@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - 'android/**'
+      - 'public/**'
+      - 'server/**'
+      - 'relay/**'
       - '.github/workflows/android-app.yml'
   workflow_dispatch:
 
@@ -60,3 +63,56 @@ jobs:
           name: ReceiptAdmin-android
           path: dist/ReceiptAdmin.apk
           if-no-files-found: error
+
+  # Runs the APK on an emulator against a real shop server and relay:
+  # pairing by deep link, signing in, the decrypted summary, shop offline.
+  emulator:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+
+      - run: npm ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ReceiptAdmin-android
+          path: apk
+
+      - name: Start a shop and a relay
+        run: |
+          mkdir -p ci-shop && cp -r server public ci-shop/
+          (PORT=8080 RELAY_KEY=ci-relay-key ONLINE_GRACE_MS=5000 DATA_DIR="$RUNNER_TEMP/relay" nohup node relay/relay.js > relay.log 2>&1 &)
+          NODE_PATH="$PWD/node_modules" PORT=3000 SESSION_SECRET=ci NO_BROWSER=1 nohup node ci-shop/server/server.js > shop.log 2>&1 &
+          echo "SHOP_PID=$!" >> "$GITHUB_ENV"
+          node android/ci/setup-shop.js
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash android/ci/emulator-test.sh apk/ReceiptAdmin.apk
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-screens
+          path: shots/
+          if-no-files-found: ignore
+
+      - if: always()
+        run: tail -n 40 relay.log shop.log
