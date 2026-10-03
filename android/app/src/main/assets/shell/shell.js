@@ -145,12 +145,16 @@ function cardHtml(s, i) {
       </div>
       <div class="small muted">Updated ${esc(ago(p.generated_at))}${r.from_phone || (r && !r.online) ? ' · last saved update' : ''}</div>`;
   }
-  return `<article class="card shop-card" data-shop="${esc(s.id)}" style="animation-delay:${i * 45}ms" tabindex="0" role="button" aria-label="${esc(s.name)}">
+  // Not role="button": that would hide the totals and status from TalkBack.
+  return `<article class="card shop-card" data-shop="${esc(s.id)}" style="animation-delay:${i * 45}ms" tabindex="0">
     <div class="spread"><div style="min-width:0;"><h2>${esc(s.name)}</h2><div class="shop-host">${esc(s.host)}</div></div>${statusHtml(s.id)}</div>
     ${body}
   </article>`;
 }
 
+$('shop-list').addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-shop]')) { e.preventDefault(); e.target.click(); }
+});
 $('shop-list').addEventListener('click', (e) => {
   const card = e.target.closest('[data-shop]');
   if (!card) return;
