@@ -8,11 +8,17 @@ on:
       - 'server/lib/remoteLink.js'
       - '.github/workflows/relay-cloudflare.yml'
   workflow_dispatch:
+    inputs:
+      relay_url:
+        description: 'Only test this live relay (e.g. https://print-management.yourname.workers.dev)'
+        required: false
+        default: ''
 
 jobs:
   # The Worker in workerd (Cloudflare's runtime) with a real shop server:
   # the full relay end-to-end test over the WebSocket link.
   test:
+    if: ${{ !inputs.relay_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +43,7 @@ jobs:
   #   RELAY_KEY              (the key you enter on the shop PC)
   # then runs the same end-to-end test against the live relay.
   deploy:
+    if: ${{ !inputs.relay_url }}
     needs: test
     runs-on: ubuntu-latest
     env:
@@ -80,3 +87,21 @@ jobs:
           URL="${{ steps.deploy.outputs.url }}"
           for i in $(seq 1 30); do curl -sf "$URL/healthz" && break; sleep 2; done
           RELAY_URL="$URL" node relay/test/relay.test.js
+
+  # Run by hand with a relay address: the full end-to-end test (a real shop
+  # server linking through it) against that live relay.
+  live-test:
+    if: ${{ inputs.relay_url }}
+    runs-on: ubuntu-latest
+    env:
+      RELAY_KEY: ${{ secrets.RELAY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - run: npm ci
+      - name: Health
+        run: curl -sS --fail-with-body "${{ inputs.relay_url }}/healthz"
+      - name: End-to-end test against the live relay
+        run: RELAY_URL="${{ inputs.relay_url }}" node relay/test/relay.test.js
