@@ -8,7 +8,15 @@ itself (`/healthz` says `link: "ws"`) and connects with a WebSocket.
 
 Free plan limits are far above what a shop uses (100,000 requests a day).
 
-## Set it up (once)
+## Set it up in one click
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mcdonaldakramah63/print-management/tree/claude/laughing-brown-abrk3q/relay-cloudflare)
+
+Sign in (or sign up, free, no card), enter a long random `RELAY_KEY` when
+asked, and deploy. The relay address is shown at the end:
+`https://receipt-relay.<your-subdomain>.workers.dev`.
+
+## Or set it up with GitHub Actions
 
 1. **Cloudflare account**: sign up at <https://dash.cloudflare.com/sign-up>
    (free, no card). Open **Workers & Pages** once and pick your

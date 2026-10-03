@@ -8,5 +8,12 @@
   },
   "devDependencies": {
     "wrangler": "^4.40.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "RELAY_KEY": {
+        "description": "The key shops must present to link to this relay. Use a long random value and enter the same key on the shop PC in Settings > Remote access and phone app."
+      }
+    }
   }
 }
