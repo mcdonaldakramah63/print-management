@@ -1085,3 +1085,12 @@ details.card summary { cursor: pointer; }
   .job-part-fields, .job-part-item .job-part-fields, .job-part-custom .job-part-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .job-part-fields .grow { grid-column: 1 / -1; }
 }
+
+/* Photocopy detection: which printers are watched */
+.copy-coverage { border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 10px 12px; background: var(--surface-2); }
+.copy-coverage summary { cursor: pointer; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; list-style: none; }
+.copy-coverage summary::-webkit-details-marker { display: none; }
+.copy-coverage summary::before { content: ''; width: 7px; height: 7px; border-right: 2px solid var(--ink-2); border-bottom: 2px solid var(--ink-2); transform: rotate(-45deg); transition: transform var(--t-quick) var(--ease-out); flex: none; }
+.copy-coverage[open] summary::before { transform: rotate(45deg); }
+.coverage-row { display: flex; flex-direction: column; gap: 3px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+.coverage-row:first-child { margin-top: 8px; }

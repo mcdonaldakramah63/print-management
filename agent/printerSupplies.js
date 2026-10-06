@@ -4,10 +4,11 @@
  * Reads toner / ink levels and the device page counter from this PC's
  * network printers over SNMP (Printer MIB) and reports them to the server.
  *
- * Printer → IP address comes from Windows (Standard TCP/IP ports), with
- * "printerAddresses" in config.json for printers Windows can't map (WSD
- * ports, shared printers). USB printers don't speak SNMP; for those the
- * server keeps estimating toner from pages printed.
+ * Printer → IP address comes from Windows for every kind of network port
+ * (Standard TCP/IP, WSD, IPP, shared printers: see devices.js), with
+ * "printerAddresses" in config.json for anything it can't trace. USB
+ * printers don't speak SNMP; for those the server keeps estimating toner
+ * from pages printed.
  */
 
 const { execFile } = require('child_process');
@@ -45,7 +46,7 @@ function discoverPrinterAddresses() {
   });
 }
 
-function createSupplyPoller({ config, postJson, log }) {
+function createSupplyPoller({ config, postJson, log, discover = discoverPrinterAddresses }) {
   const {
     printers = [],
     printerAddresses = {},
@@ -57,7 +58,7 @@ function createSupplyPoller({ config, postJson, log }) {
   const failures = new Map(); // printer -> last logged failure time
 
   async function pollOnce() {
-    const discovered = await discoverPrinterAddresses();
+    const discovered = await discover().catch(() => ({}));
     const targets = { ...discovered };
     for (const [name, value] of Object.entries(printerAddresses)) {
       targets[name] = typeof value === 'string' ? { host: value, community: null } : value;

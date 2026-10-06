@@ -20,6 +20,7 @@ const { countDocumentPages } = require('./docPages');
 const { createSupplyPoller, discoverPrinterAddresses } = require('./printerSupplies');
 const { createCopyMonitor } = require('./copyMonitor');
 const { createPrinterControl, PowerShellHost } = require('./printerControl');
+const { createDeviceMap } = require('./devices');
 const fs = require('fs');
 const path = require('path');
 
@@ -261,8 +262,27 @@ function startWatcher() {
 process.on('SIGINT', () => { log('Shutting down.'); process.exit(0); });
 process.on('SIGTERM', () => { log('Shutting down.'); process.exit(0); });
 
+// Every printer traced to its device (any network port type, or USB), and
+// USB printers' counters read through the cable. Its own PowerShell host, so
+// a slow device never holds up the printer panel on the web page.
+const deviceHost = new PowerShellHost({
+  scriptPath: STANDALONE ? embeddedScript('printer-control.ps1') : path.join(__dirname, 'printer-control.ps1'),
+  printers,
+  log: (m) => log(m.replace('[printer control]', '[devices]'))
+});
+const deviceMap = createDeviceMap({ host: deviceHost, config });
+const discoverAddresses = () => deviceMap.addresses().catch((err) => {
+  log(`Could not trace printers to their devices (${err.message}); using Standard TCP/IP ports only.`);
+  return discoverPrinterAddresses();
+});
+
 // Photocopies: the printer's own page counter vs the jobs spooled to it.
-const copyMonitor = createCopyMonitor({ config, postJson, log, queuePath: COPY_QUEUE_PATH, discover: discoverPrinterAddresses });
+const copyMonitor = createCopyMonitor({
+  config, postJson, log, queuePath: COPY_QUEUE_PATH,
+  discover: discoverPrinterAddresses,
+  listDevices: () => deviceMap.list(),
+  usbHost: deviceHost
+});
 
 copyMonitor.start().catch((err) => log(`Photocopy detection could not start: ${err.message}`));
 
@@ -283,5 +303,5 @@ startWatcher();
 setInterval(flushQueue, flushIntervalMs);
 setInterval(heartbeat, heartbeatIntervalMs);
 // Toner / ink levels and the printer's own page counter, over SNMP.
-createSupplyPoller({ config, postJson, log }).start();
+createSupplyPoller({ config, postJson, log, discover: discoverAddresses }).start();
 log(`Print monitor agent started. Reporting to ${backendUrl}`);

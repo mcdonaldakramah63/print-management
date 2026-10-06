@@ -33,11 +33,18 @@
  * goes backwards (printer replaced or reset) or jumps absurdly re-baselines.
  * Several Windows printers pointing at the same device (PCL + PS drivers)
  * share one ledger, keyed by the printer's address.
+ *
+ * The counter is read from every kind of printer the agent can trace to its
+ * device (devices.js): network printers on any port type (TCP/IP, WSD, IPP,
+ * shared from another PC) over SNMP, and USB printers through the cable in
+ * PJL. Each printer's coverage (how it is watched, or why it can't be) is
+ * reported to the server and shown in the app.
  */
 
 const crypto = require('crypto');
 const fs = require('fs');
 const { readCounters, readColorants } = require('./snmp');
+const { readUsbCounter, usbAddress } = require('./devices');
 
 const DEFAULTS = {
   pollMs: 60 * 1000,
@@ -264,7 +271,7 @@ class CopyDetector {
 // ---------------------------------------------------------------
 // Polling, address mapping and reporting
 // ---------------------------------------------------------------
-function createCopyMonitor({ config, postJson, log, queuePath, discover }) {
+function createCopyMonitor({ config, postJson, log, queuePath, discover, listDevices, usbHost, readUsb = readUsbCounter }) {
   const {
     printers = [],
     printerAddresses = {},
@@ -273,36 +280,98 @@ function createCopyMonitor({ config, postJson, log, queuePath, discover }) {
     detectCopies = true,
     copyPollSeconds = 60,
     copyCounterOids = {},
-    printerColorOverride = {}
+    printerColorOverride = {},
+    usbCounters = true
   } = config;
   const pollMs = Math.max(15, copyPollSeconds) * 1000;
   const detector = new CopyDetector({ pollMs, ...(config.copyDetectorOptions || {}) });
 
-  let targets = {};          // printer name -> { host, community, port }
   const nameToKey = new Map();
-  const devices = new Map(); // key -> { host, community, port, names: Set, colorKnown }
+  // key -> network: { kind:'snmp', host, port, communities, ci, names, colorKnown, colorCapable }
+  //        usb:     { kind:'usb', usb_path, port, names, colorKnown, colorCapable, deviceId, model, serial }
+  const devices = new Map();
+  const coverage = new Map(); // printer name -> what watches it, and how that is going
+  let coverageSent = '';
   let queue = [];
   try { queue = JSON.parse(fs.readFileSync(queuePath, 'utf8')); } catch { queue = []; }
   const failures = new Map();
 
-  const keyFor = (t) => `${t.host}:${t.port || snmpPort}`;
+  const KIND_LABEL = { tcpip: 'TCP/IP port', wsd: 'WSD port', url: 'IPP port', shared: 'shared printer', configured: 'address from config.json' };
 
-  async function refreshTargets() {
+  function setCoverage(names, entry) {
+    for (const name of names) coverage.set(name, { printer_name: name, ...entry });
+  }
+
+  function unsupportedReason(d) {
+    const server = d.server ? `\\\\${d.server}` : 'its server';
+    switch (d.note || d.kind) {
+      case 'usb_on_server': return `Shared from ${server}, where it is plugged in by USB. Run the print agent on ${server} too: it reads the counter there.`;
+      case 'server_unreachable': return `Shared from ${server}, which didn't answer. Run the print agent on ${server}, or add the printer's IP address under "printerAddresses" in config.json.`;
+      case 'usb_unplugged': return 'USB printer that is not plugged in or switched on.';
+      case 'usb_device_not_found': return `USB port ${d.port}: Windows doesn't list the device behind it. Unplug and replug the cable.`;
+      case 'wsd': return `WSD port: Windows didn't give this printer's IP address. Add it under "printerAddresses" in config.json.`;
+      case 'url': return `Port ${d.port}: no address in it. Add the printer's IP address under "printerAddresses" in config.json.`;
+      case 'shared': return `Shared from ${server}: its address couldn't be found there. Run the print agent on ${server}, or add the printer's IP address under "printerAddresses" in config.json.`;
+      case 'parallel': return `Parallel/serial port ${d.port}: printers on these ports can't report a page counter.`;
+      default: return `Port ${d.port || '(none)'}: not a kind of port the agent can trace to the printer. Add the printer's IP address under "printerAddresses" in config.json.`;
+    }
+  }
+
+  // Older callers pass discover(): printer name -> { host, community, port }.
+  async function deviceList() {
+    if (listDevices) return listDevices();
     const discovered = discover ? await discover() : {};
     const next = { ...discovered };
     for (const [name, value] of Object.entries(printerAddresses)) {
       next[name] = typeof value === 'string' ? { host: value, community: null } : value;
     }
-    targets = {};
+    return Object.entries(next).map(([name, t]) => ({ name, kind: 'configured', host: t.host, community: t.community || null, snmp_port: t.port || null }));
+  }
+
+  async function refreshTargets() {
+    const list = await deviceList();
     nameToKey.clear();
-    for (const [name, t] of Object.entries(next)) {
-      if (printers.length > 0 && !printers.includes(name)) continue;
-      targets[name] = t;
-      const key = keyFor(t);
-      nameToKey.set(name, key);
-      if (!devices.has(key)) devices.set(key, { host: t.host, port: t.port || snmpPort, community: t.community || snmpCommunity, names: new Set(), colorKnown: false });
-      devices.get(key).names.add(name);
+    const seen = new Set();
+    const seenPrinters = new Set();
+    for (const d of list) {
+      if (printers.length > 0 && !printers.includes(d.name)) continue;
+      if (d.kind === 'virtual') continue;
+      seenPrinters.add(d.name);
+      let key = null;
+      if (d.host) {
+        const port = d.snmp_port || snmpPort;
+        key = `${d.host}:${port}`;
+        if (!devices.has(key)) {
+          const communities = [...new Set([d.community, snmpCommunity, 'public'].filter(Boolean))];
+          devices.set(key, { kind: 'snmp', host: d.host, port, communities, ci: 0, names: new Set(), colorKnown: false, via: d.kind });
+        }
+      } else if (d.kind === 'usb' && d.usb_path && !d.note) {
+        if (!usbHost || !usbCounters) {
+          setCoverage([d.name], { method: 'none', state: 'unsupported', address: '', detail: 'USB printer: reading counters over USB is turned off ("usbCounters": false in config.json).' });
+          continue;
+        }
+        key = `usb:${d.usb_path}`;
+        if (!devices.has(key)) devices.set(key, { kind: 'usb', usb_path: d.usb_path, port: d.port, names: new Set(), colorKnown: false });
+      } else {
+        setCoverage([d.name], { method: 'none', state: d.note === 'usb_unplugged' ? 'offline' : 'unsupported', address: '', detail: unsupportedReason(d) });
+        continue;
+      }
+      const dev = devices.get(key);
+      dev.names.add(d.name);
+      if (d.color_capable === false) dev.colorCapable = false;
+      nameToKey.set(d.name, key);
+      seen.add(key);
+      if (!coverage.has(d.name) || coverage.get(d.name).method === 'none') {
+        setCoverage([d.name], {
+          method: dev.kind === 'usb' ? 'usb' : 'snmp',
+          state: 'starting',
+          address: dev.kind === 'usb' ? d.port : d.host,
+          detail: dev.kind === 'usb' ? `USB (${d.port}): checking the printer…` : `Network printer at ${d.host} (${KIND_LABEL[d.kind] || 'network'}): checking…`
+        });
+      }
     }
+    for (const key of [...devices.keys()]) if (!seen.has(key)) devices.delete(key);
+    for (const name of [...coverage.keys()]) if (!seenPrinters.has(name)) coverage.delete(name);
   }
 
   function jobSpooling(job) {
@@ -329,11 +398,15 @@ function createCopyMonitor({ config, postJson, log, queuePath, discover }) {
     for (const name of dev.names) {
       if (printerColorOverride[name] === 'mono') { d.color = 'mono'; return; }
     }
-    try {
-      const colorants = await readColorants(dev.host, { community: dev.community, port: dev.port, timeoutMs: 1500, retries: 1 });
-      // A device with only black toner can only make black-and-white copies.
-      if (colorants.length > 0 && !colorants.some((c) => COLOURS.has(c))) d.color = 'mono';
-    } catch { /* stays unknown */ }
+    if (dev.kind === 'snmp') {
+      try {
+        const colorants = await readColorants(dev.host, { community: dev.communities[dev.ci], port: dev.port, timeoutMs: 1500, retries: 1 });
+        // A device with only black toner can only make black-and-white copies.
+        if (colorants.length > 0) { if (!colorants.some((c) => COLOURS.has(c))) d.color = 'mono'; return; }
+      } catch { /* fall back to the driver */ }
+    }
+    // The Windows driver says it can't print in colour: B&W copies.
+    if (dev.colorCapable === false) d.color = 'mono';
   }
 
   function enqueue(events) {
@@ -362,6 +435,91 @@ function createCopyMonitor({ config, postJson, log, queuePath, discover }) {
     }
   }
 
+  // Tell the server which printers are watched, and how (shown in the app).
+  async function reportCoverage(force = false) {
+    const printersCov = [...coverage.values()].sort((a, b) => a.printer_name.localeCompare(b.printer_name));
+    const sig = JSON.stringify(printersCov);
+    if (!force && sig === coverageSent) return;
+    try {
+      const res = await postJson('/api/print-jobs/copy-coverage', { printers: printersCov });
+      if (res.ok) coverageSent = sig;
+    } catch { /* next change or refresh retries */ }
+  }
+
+  function noteFailure(key, dev, message) {
+    if (Date.now() - (failures.get(key) || 0) > 3600 * 1000) {
+      log(`Photocopy detection can't read the page counter of ${[...dev.names].join(' / ')} (${dev.kind === 'usb' ? dev.port : dev.host}): ${message}`);
+      failures.set(key, Date.now());
+    }
+  }
+
+  async function readNetwork(key, dev) {
+    const oids = oidsFor(dev);
+    try {
+      const r = await readCounters(dev.host, { community: dev.communities[dev.ci], port: dev.port, timeoutMs: 1500, retries: 1 },
+        oids ? [oids.total, oids.color].filter(Boolean) : []);
+      if (!Number.isFinite(r.life_count) && !(oids && Number.isFinite(r.extra[oids.total]))) throw new Error('the printer has no page counter in its Printer MIB');
+      const reading = { count: r.life_count, unit: r.unit, status: r.status };
+      if (oids && Number.isFinite(r.extra[oids.total])) {
+        reading.copyCount = r.extra[oids.total];
+        if (oids.color && Number.isFinite(r.extra[oids.color])) reading.colorCopyCount = r.extra[oids.color];
+      }
+      failures.delete(key);
+      setCoverage(dev.names, {
+        method: reading.copyCount !== undefined ? 'copy_counter' : 'snmp', state: 'ok', address: dev.host,
+        detail: `Network printer at ${dev.host} (${KIND_LABEL[dev.via] || 'network'}): page counter read over SNMP${reading.copyCount !== undefined ? ', with its own copy counter' : ''}.`
+      });
+      return reading;
+    } catch (err) {
+      // Try the next community string next time (the port's, config's, "public").
+      if (dev.communities.length > 1) dev.ci = (dev.ci + 1) % dev.communities.length;
+      noteFailure(key, dev, err.message);
+      setCoverage(dev.names, {
+        method: 'snmp', state: 'failing', address: dev.host,
+        detail: `Network printer at ${dev.host}: no answer to SNMP (${err.message}). Turn SNMP on in the printer's settings page, or set its community name as "snmpCommunity" in config.json (tried ${dev.communities.map((c) => `"${c}"`).join(', ')}).`
+      });
+      return null;
+    }
+  }
+
+  async function readUsbDevice(key, dev, nowMs) {
+    if (dev.noPjlUntil && nowMs < dev.noPjlUntil) return null;
+    // Our own spooler says a job is on its way to it: leave the cable alone
+    // (a job stuck "spooling" for over an hour no longer counts).
+    const d = detector.device(key);
+    if ([...d.inFlight.values()].some((t) => nowMs - t < detector.o.inFlightMaxMs)) return null;
+    // Quiet for half an hour: ask every 5 minutes instead of every minute,
+    // so the printer can go to sleep. Any change brings it back to every poll.
+    if (dev.quietSince && nowMs - dev.quietSince >= 30 * 60 * 1000 && dev.lastReadAt && nowMs - dev.lastReadAt < 5 * 60 * 1000 - 5000) return null;
+    let r;
+    try {
+      r = await readUsb(usbHost, dev, dev.deviceId);
+    } catch (err) {
+      if (/in use/.test(err.message)) return null; // the spooler has it; next poll
+      noteFailure(key, dev, err.message);
+      setCoverage(dev.names, { method: 'usb', state: /not connected/.test(err.message) ? 'offline' : 'failing', address: dev.port, detail: `USB (${dev.port}): ${err.message}.` });
+      return null;
+    }
+    if (r.busy) return null;
+    if (r.deviceId) dev.deviceId = r.deviceId;
+    const label = r.model || 'This USB printer';
+    if (r.pjl === false) {
+      dev.noPjlUntil = nowMs + 6 * 3600 * 1000;
+      setCoverage(dev.names, {
+        method: 'none', state: 'unsupported', address: dev.port,
+        detail: `${label} (USB) doesn't report its page counter over the cable: it doesn't understand PJL, as with most inkjets. Connect it to the network (Wi-Fi or cable) and photocopies are detected over SNMP.`
+      });
+      return null;
+    }
+    failures.delete(key);
+    dev.serial = r.serial || dev.serial;
+    dev.lastReadAt = nowMs;
+    if (dev.lastCount !== r.count || r.status === 'printing') dev.quietSince = nowMs;
+    dev.lastCount = r.count;
+    setCoverage(dev.names, { method: 'usb', state: 'ok', address: dev.port, detail: `${label} on USB (${dev.port}): page counter read through the cable (PJL).` });
+    return { count: r.count, unit: 'impressions', status: r.status };
+  }
+
   let polling = false;
   async function pollOnce(nowMs = Date.now()) {
     if (polling) return [];
@@ -370,27 +528,12 @@ function createCopyMonitor({ config, postJson, log, queuePath, discover }) {
     try {
       for (const [key, dev] of devices) {
         if (!dev.colorKnown) await learnColour(key, dev);
-        const oids = oidsFor(dev);
-        let reading;
-        try {
-          const r = await readCounters(dev.host, { community: dev.community, port: dev.port, timeoutMs: 1500, retries: 1 },
-            oids ? [oids.total, oids.color].filter(Boolean) : []);
-          reading = { count: r.life_count, unit: r.unit, status: r.status };
-          if (oids && Number.isFinite(r.extra[oids.total])) {
-            reading.copyCount = r.extra[oids.total];
-            if (oids.color && Number.isFinite(r.extra[oids.color])) reading.colorCopyCount = r.extra[oids.color];
-          }
-          failures.delete(key);
-        } catch (err) {
-          if (Date.now() - (failures.get(key) || 0) > 3600 * 1000) {
-            log(`Photocopy detection can't read the page counter of ${[...dev.names].join(' / ')} (${dev.host}): ${err.message}`);
-            failures.set(key, Date.now());
-          }
-          continue;
-        }
+        const reading = dev.kind === 'usb' ? await readUsbDevice(key, dev, nowMs) : await readNetwork(key, dev);
+        if (!reading) continue;
         const printerName = [...dev.names][0];
+        const address = dev.kind === 'usb' ? usbAddress(dev, dev.serial) : dev.host;
         for (const e of detector.observe(key, reading, nowMs)) {
-          const event = { ...e, printer_name: printerName, address: dev.host };
+          const event = { ...e, printer_name: printerName, address };
           delete event.device;
           found.push(event);
           log(`Photocopies detected on ${printerName}: ${e.pages} ${e.unit === 'sheets' ? 'sheet' : 'page'}(s), ${e.started_at.slice(11, 16)}–${e.ended_at.slice(11, 16)} (${e.confidence} confidence).`);
@@ -401,22 +544,30 @@ function createCopyMonitor({ config, postJson, log, queuePath, discover }) {
     }
     enqueue(found);
     await flush();
+    await reportCoverage();
     return found;
+  }
+
+  function summary() {
+    const rows = [...coverage.values()];
+    const watched = rows.filter((c) => c.method !== 'none');
+    const not = rows.filter((c) => c.method === 'none');
+    if (watched.length) log(`Photocopy detection watches ${watched.map((c) => `${c.printer_name} (${c.method === 'usb' ? `USB ${c.address}` : c.address})`).join(', ')}.`);
+    for (const c of not) log(`Photocopy detection can't watch ${c.printer_name}: ${c.detail}`);
+    if (rows.length === 0) log('Photocopy detection: no printers found on this PC.');
   }
 
   async function start() {
     if (!detectCopies) return;
-    await refreshTargets().catch(() => {});
-    if (devices.size === 0) {
-      log('Photocopy detection: no network printers found (USB printers have no page counter to read).');
-    }
+    await refreshTargets().catch((err) => log(`Photocopy detection couldn't list the printers: ${err.message}`));
+    summary();
     const run = () => pollOnce().catch((err) => log(`Photocopy polling failed: ${err.message}`));
     run();
     setInterval(run, pollMs);
-    setInterval(() => refreshTargets().catch(() => {}), 30 * 60 * 1000);
+    setInterval(() => refreshTargets().then(() => reportCoverage(true)).catch(() => {}), 30 * 60 * 1000);
   }
 
-  return { start, pollOnce, refreshTargets, jobSpooling, jobPrinted, detector, flush, get queue() { return queue; } };
+  return { start, pollOnce, refreshTargets, jobSpooling, jobPrinted, detector, flush, reportCoverage, get queue() { return queue; }, get coverage() { return [...coverage.values()]; } };
 }
 
 module.exports = { CopyDetector, createCopyMonitor, jobUnits, localIso, DEFAULTS };

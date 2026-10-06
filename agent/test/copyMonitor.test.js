@@ -179,8 +179,9 @@ test('vendor copy counters are used directly, colour split included', () => {
   fake.table['1.3.6.1.2.1.25.3.5.1.1.1'] = 3;
   for (let m = 1; m <= 12; m++) await monitor.pollOnce(now + m * MIN);
   fake.close();
-  const events = posted.flatMap((p) => p.body.events);
-  assert.strictEqual(posted[0].url, '/api/print-jobs/copies');
+  const copyPosts = posted.filter((p) => p.url === '/api/print-jobs/copies');
+  const events = copyPosts.flatMap((p) => p.body.events);
+  assert.ok(copyPosts.length > 0);
   assert.strictEqual(events.length, 1);
   assert.strictEqual(events[0].printer_name, 'Office MFP');
   assert.strictEqual(events[0].address, '127.0.0.1');

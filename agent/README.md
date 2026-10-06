@@ -60,9 +60,10 @@ and cross-check it against what was rung up in Sales History.
 
 Every 15 minutes the agent asks this PC's **network** printers for their
 supply levels over SNMP (the standard Printer MIB), and their own page
-counter. It finds each printer's IP address from its Windows printer port
-(Standard TCP/IP ports). For printers it can't map (WSD ports, shared
-printers), add them to `config.json`:
+counter. It finds each printer's IP address from Windows, for every kind
+of network port (Standard TCP/IP, WSD, IPP, and shared printers through
+the PC sharing them). For a printer it still can't map, add it to
+`config.json`:
 
 ```json
 "printerAddresses": { "HP Color LaserJet": "192.168.1.50" }
@@ -76,9 +77,28 @@ report levels; the app then estimates toner from pages printed. Set
 ## Photocopies
 
 A photocopy never reaches the Windows print spooler, but it does turn the
-printer's own page counter. Every minute the agent reads that counter
-(SNMP, same printers and settings as toner levels above) and checks each
-page it went up by against the print jobs this PC sent to that printer:
+printer's own page counter. Every minute the agent reads that counter and
+checks each page it went up by against the print jobs this PC sent to that
+printer. The counter is read from every printer the agent can trace to its
+device, whatever its connection:
+
+| Printer connected by | How the counter is read |
+|---|---|
+| Network, Standard TCP/IP port | SNMP, at the port's IP address or host name |
+| Network, **WSD** port (how Windows 10/11 adds network printers by itself) | SNMP, at the IP address Windows found the printer on |
+| Network, IPP / web address port | SNMP, at the address in the port |
+| **Shared** from another PC (`\\PC\Printer`) | SNMP, at the address of the server PC's own port. If it is on USB there, run the agent on that PC too. |
+| **USB** cable | Asked through the cable in PJL (`@PJL INFO PAGECOUNT`), the printer language most laser printers and MFPs speak (HP, Brother, Kyocera, Ricoh, Lexmark, Xerox, Canon imageRUNNER…). |
+
+USB safety: the agent only sends PJL to a printer whose own device ID says
+it understands PJL, so nothing can print as text; it opens the USB device
+for a few seconds at most, and only while nothing is waiting to print on
+it. A USB printer that doesn't speak PJL (most inkjets, such as Epson
+EcoTank and Canon Pixma) can't report its counter over the cable: connect
+it to the network by Wi-Fi or cable and it is watched over SNMP instead.
+
+**Print monitor → Photocopies → Watching N of M printers** lists every
+printer, how it is watched, and for any that can't be, why and what to do.
 
 - Each spooled job is owed by the counter (pages × copies, or sheets if the
   printer counts sheets), from just before it was submitted until 15 minutes
@@ -108,6 +128,8 @@ Settings in `config.json`:
 |---|---|---|
 | `detectCopies` | `true` | Turn photocopy detection off with `false`. |
 | `copyPollSeconds` | `60` | How often the page counter is read (minimum 15). |
+| `usbCounters` | `true` | Read USB printers' counters through the cable (PJL). `false` turns it off. |
+| `printerAddresses` | `{}` | A printer's IP address when Windows can't trace it (or to override it), e.g. `{ "Back Office": "192.168.1.41" }`. Also used for toner levels. |
 | `copyCounterOids` | `{}` | Optional, per printer: the vendor's own copy counters, for exact counts (and a colour split). E.g. `{ "Office MFP": { "total": "1.3.6.1.4.1.…", "color": "1.3.6.1.4.1.…" } }`. Find the OIDs in your printer's MIB documentation. |
 
 Pages printed while the agent isn't running can't be told apart from

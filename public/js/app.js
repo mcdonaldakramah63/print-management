@@ -2639,7 +2639,38 @@ const COPY_EVIDENCE = {
 };
 const COPY_BADGE = { high: '<span class="badge ok">Sure</span>', medium: '<span class="badge">Likely</span>', low: '<span class="badge warn">Unsure</span>' };
 
+const COVERAGE_METHOD = { snmp: 'Network', usb: 'USB cable', copy_counter: 'Copy counter' };
+const COVERAGE_STATE = {
+  ok: ['Watching', 'ok'], starting: ['Checking', ''], failing: ['Can\'t read the counter', 'danger'],
+  offline: ['Printer off or unplugged', 'warn'], unsupported: ['Can\'t be watched', 'warn']
+};
+
+// Which printers photocopy detection watches, and why any can't be.
+async function loadCopyCoverage() {
+  const { printers } = await api('GET', '/api/copies/coverage');
+  const box = $('copy-coverage');
+  box.hidden = printers.length === 0;
+  if (!printers.length) return;
+  const watching = printers.filter((c) => c.state === 'ok' && !c.agent_offline).length;
+  const problems = printers.filter((c) => c.state !== 'ok' || c.agent_offline).length;
+  $('copy-coverage-summary').innerHTML = `Watching ${watching} of ${plural(printers.length, 'printer')}${problems ? ` <span class="badge warn">${problems} need${problems === 1 ? 's' : ''} attention</span>` : ''}`;
+  // Open by itself the first time there is something to fix.
+  if (problems && !box.dataset.seen) box.open = true;
+  box.dataset.seen = '1';
+  $('copy-coverage-list').innerHTML = printers.map((c) => {
+    const [label, cls] = c.agent_offline ? ['Agent offline', 'warn'] : (COVERAGE_STATE[c.state] || [c.state, '']);
+    return `<div class="coverage-row">
+      <div class="spread" style="gap:8px;">
+        <strong>${escapeHtml(c.printer_name)}</strong>
+        <span class="row" style="gap:6px;">${c.method === 'none' ? '' : `<span class="badge info">${escapeHtml(COVERAGE_METHOD[c.method] || c.method)}</span>`}<span class="badge ${cls}">${escapeHtml(label)}</span></span>
+      </div>
+      <div class="muted small">${escapeHtml(c.detail)}${c.agent_offline ? ` The agent on ${escapeHtml(c.agent_label)} hasn't reported since ${escapeHtml(formatDbDate(c.last_seen_at) || 'it was set up')}.` : ''}</div>
+    </div>`;
+  }).join('');
+}
+
 async function loadCopies() {
+  loadCopyCoverage().catch(() => { /* optional panel */ });
   const date = $('summary-date').value || localDateString();
   const { copies } = await api('GET', `/api/copies?date=${encodeURIComponent(date)}`);
   const counted = copies.filter((c) => c.status === 'open' || c.status === 'billed');

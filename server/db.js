@@ -406,6 +406,22 @@ CREATE INDEX IF NOT EXISTS idx_notifications_open ON notifications(resolved_at, 
 ensureColumn('settings', 'toner_warn_pct', 'toner_warn_pct INTEGER NOT NULL DEFAULT 20');
 ensureColumn('settings', 'toner_critical_pct', 'toner_critical_pct INTEGER NOT NULL DEFAULT 10');
 
+// ---------- Photocopy detection coverage ----------
+// Per agent and printer: how its page counter is read (network over SNMP,
+// USB through the cable, a vendor copy counter) or why it can't be.
+db.exec(`
+CREATE TABLE IF NOT EXISTS copy_coverage (
+  agent_id      INTEGER NOT NULL REFERENCES agents(id),
+  printer_name  TEXT NOT NULL,
+  method        TEXT NOT NULL,
+  state         TEXT NOT NULL,
+  address       TEXT NOT NULL DEFAULT '',
+  detail        TEXT NOT NULL DEFAULT '',
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (agent_id, printer_name)
+);
+`);
+
 // ---------- Job builder ----------
 // A customer's order taken at the counter (pages, copies, finishing) and
 // tracked until it is collected. Priced from the catalog; billed through a

@@ -169,6 +169,27 @@ router.post('/copies', requireAgent, (req, res) => {
   res.json({ ok: true, ...ingestCopyEvents(req.agent.id, req.body.events) });
 });
 
+// Which of this agent's printers photocopy detection can watch, and how.
+const COVERAGE_METHODS = ['snmp', 'usb', 'copy_counter', 'none'];
+const COVERAGE_STATES = ['ok', 'starting', 'failing', 'offline', 'unsupported'];
+router.post('/copy-coverage', requireAgent, (req, res) => {
+  const rows = (Array.isArray(req.body && req.body.printers) ? req.body.printers : []).slice(0, 200)
+    .filter((c) => c && c.printer_name && COVERAGE_METHODS.includes(c.method) && COVERAGE_STATES.includes(c.state));
+  const upsert = db.prepare(`
+    INSERT INTO copy_coverage (agent_id, printer_name, method, state, address, detail, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT (agent_id, printer_name) DO UPDATE SET method = excluded.method, state = excluded.state,
+      address = excluded.address, detail = excluded.detail, updated_at = excluded.updated_at
+  `);
+  db.transaction(() => {
+    db.prepare('DELETE FROM copy_coverage WHERE agent_id = ?').run(req.agent.id);
+    for (const c of rows) {
+      upsert.run(req.agent.id, String(c.printer_name).slice(0, 200), c.method, c.state, String(c.address || '').slice(0, 100), String(c.detail || '').slice(0, 500));
+    }
+  })();
+  res.json({ ok: true, stored: rows.length });
+});
+
 // ---------------------------------------------------------------
 // Admin-facing: the log itself
 // ---------------------------------------------------------------

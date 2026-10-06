@@ -11,6 +11,7 @@
   "printerAddresses": {},
   "detectCopies": true,
   "copyPollSeconds": 60,
+  "usbCounters": true,
   "copyCounterOids": {},
   "remoteControl": true,
   "printerColorOverride": {

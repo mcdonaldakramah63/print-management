@@ -12,6 +12,18 @@ router.get('/', requireAdmin, (req, res) => {
   res.json({ date, copies: copies.listCopies(date, req.query.status) });
 });
 
+// Admin: which printers photocopy detection watches, and how (per agent).
+router.get('/coverage', requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT c.*, a.label AS agent_label, a.last_seen_at,
+      (a.last_seen_at IS NULL OR a.last_seen_at < datetime('now', '-10 minutes')) AS agent_offline
+    FROM copy_coverage c JOIN agents a ON a.id = c.agent_id
+    WHERE a.active = 1
+    ORDER BY CASE c.state WHEN 'ok' THEN 1 ELSE 0 END, c.printer_name
+  `).all().map((r) => ({ ...r, agent_offline: !!r.agent_offline }));
+  res.json({ printers: rows });
+});
+
 // Checkout: recent copy runs nobody has rung up yet, with suggested lines.
 router.get('/open', requireAuth, (req, res) => {
   const hours = Math.min(Math.max(parseInt(req.query.hours, 10) || 12, 1), 72);
