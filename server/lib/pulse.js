@@ -119,7 +119,7 @@ function buildPulse(now = new Date()) {
   // Toner and stock alerts: the same ones the admin sees under the bell.
   alerts.push(...safe(() => require('./notifications').forPulse(), []));
 
-  const agents = db.prepare('SELECT label, last_seen_at FROM agents WHERE active = 1 ORDER BY label').all();
+  const agents = db.prepare("SELECT label, last_seen_at FROM agents WHERE active = 1 AND kind = 'agent' ORDER BY label").all();
 
   return {
     v: 1,

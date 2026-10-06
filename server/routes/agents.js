@@ -14,7 +14,7 @@ router.get('/', requireAdmin, (req, res) => {
              (julianday('now') - julianday(last_seen_at)) * 24 * 60 <= 5
         THEN 1 ELSE 0
       END AS online
-    FROM agents ORDER BY created_at DESC
+    FROM agents WHERE kind = 'agent' ORDER BY created_at DESC
   `).all();
   res.json({ agents });
 });

@@ -100,6 +100,30 @@ it to the network by Wi-Fi or cable and it is watched over SNMP instead.
 **Print monitor → Photocopies → Watching N of M printers** lists every
 printer, how it is watched, and for any that can't be, why and what to do.
 
+### Printers whose counter can't be read: typed-in counter readings
+
+For a printer the agent can't read (a USB inkjet without PJL, an older
+host-based laser) and for a copier that isn't connected to any PC, the
+counter can be typed in instead. In **Print monitor → Photocopies**, press
+**Count copies from its counter, typed in** on that printer (or **+ A
+printer or copier not connected to any PC**), say whether it is black and
+white, colour, or colour with its own colour counter, and type in the
+number its counter shows now: that is the starting point.
+
+From then on, type in its counter whenever you like. The end-of-day close
+asks for it, so once a day is the usual rhythm, and some shops read it
+before and after a customer's copies. Each reading turns into a photocopy
+run:
+
+    photocopies = counter growth since the last reading
+                - pages printed to it from the PCs (the print jobs)
+                - photocopies already detected on it automatically
+
+The run waits at the till like any other, shows in Print monitor and
+counts in Printed vs sold. A printer with no reading for over a day raises
+an alert. If the number is lower than the last one the app refuses it,
+unless you tick that the counter was reset (printer replaced or repaired).
+
 - Each spooled job is owed by the counter (pages × copies, or sheets if the
   printer counts sheets), from just before it was submitted until 15 minutes
   after the spooler finished it, since printers buffer and print late.

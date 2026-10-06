@@ -1094,3 +1094,5 @@ details.card summary { cursor: pointer; }
 .copy-coverage[open] summary::before { transform: rotate(45deg); }
 .coverage-row { display: flex; flex-direction: column; gap: 3px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
 .coverage-row:first-child { margin-top: 8px; }
+.close-counters { border-top: 1px solid var(--side-line); padding-top: 12px; }
+.close-counters .field label { color: var(--side-text); }

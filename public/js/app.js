@@ -802,8 +802,8 @@ function copyWaitingRow(c) {
   const colour = c.color_pages && !c.mono_pages && !c.unknown_pages ? 'colour' : c.unknown_pages ? 'colour not known' : c.color_pages ? `${c.color_pages} colour` : 'B&W';
   return `<div class="waiting-row copy-row">
     <div style="min-width:0;">
-      <div><span class="badge info">Photocopies</span> <strong>${escapeHtml(c.printer_name)}</strong> <span class="muted small">· ${escapeHtml(timeOf(c.started_at))}–${escapeHtml(timeOf(c.ended_at))}</span></div>
-      <div class="muted small">${plural(c.pages, c.unit === 'sheets' ? 'sheet' : 'page')} · ${escapeHtml(colour)} · ${escapeHtml(COPY_CONFIDENCE[c.confidence])}: no print job behind it</div>
+      <div><span class="badge info">Photocopies</span> <strong>${escapeHtml(c.printer_name)}</strong> <span class="muted small">· ${c.source === 'manual_counter' ? `counter typed in at ${escapeHtml(timeOf(c.ended_at))}` : `${escapeHtml(timeOf(c.started_at))}–${escapeHtml(timeOf(c.ended_at))}`}</span></div>
+      <div class="muted small">${plural(c.pages, c.unit === 'sheets' ? 'sheet' : 'page')} · ${escapeHtml(colour)} · ${c.source === 'manual_counter' ? 'from the counter typed in, PC printing taken off' : `${escapeHtml(COPY_CONFIDENCE[c.confidence])}: no print job behind it`}</div>
       ${canAdd ? '' : '<div class="small" style="color:var(--warn-ink);">No photocopy or print product matches. Set "Print service" on a product.</div>'}
     </div>
     <button type="button" class="btn btn-outline btn-sm" data-add-copy="${c.id}" ${canAdd ? '' : 'disabled'}>Add to sale</button>
@@ -1619,7 +1619,48 @@ async function loadClose() {
     $('cash-counted').value = '';
     $('close-note').value = '';
     renderVariance();
+    renderCloseCounters(data.date).catch(() => { $('close-counters').hidden = true; });
   }
+}
+
+// Printers counted from typed-in readings: their counters, taken at closing.
+let closeCounterList = [];
+async function renderCloseCounters(date) {
+  const box = $('close-counters');
+  // Readings are stamped now, so only when closing today.
+  if (date !== localDateString()) { box.hidden = true; closeCounterList = []; return; }
+  const { printers } = await api('GET', '/api/counters');
+  closeCounterList = printers;
+  box.hidden = printers.length === 0;
+  box.innerHTML = printers.length === 0 ? '' : `
+    <div><span class="label-like" style="color:var(--side-text);">Printer counters</span>
+      <p class="small" style="margin:2px 0 0; color:var(--side-mute);">Type in what each printer's counter shows now. The photocopies made on it today are worked out from them.</p></div>
+    ${printers.map((p) => `<div class="form-grid">
+      <div class="field"><label for="cc-${p.id}">${escapeHtml(p.name)}${p.color === 'split' ? ' (total)' : ''}</label><input id="cc-${p.id}" data-counter="${p.id}" type="number" min="0" step="1" inputmode="numeric" placeholder="${p.last_reading ? `last ${p.last_reading.count}` : 'first reading'}"></div>
+      ${p.color === 'split' ? `<div class="field"><label for="ccc-${p.id}">Colour counter</label><input id="ccc-${p.id}" data-counter-color="${p.id}" type="number" min="0" step="1" inputmode="numeric" placeholder="${p.last_reading && p.last_reading.color_count != null ? `last ${p.last_reading.color_count}` : ''}"></div>` : ''}
+    </div>`).join('')}`;
+}
+
+/** Save the counters typed in on the close card. Throws on the first bad one. */
+async function saveCloseCounters() {
+  const results = [];
+  for (const p of closeCounterList) {
+    const el = document.querySelector(`[data-counter="${p.id}"]`);
+    if (!el || el.value === '') continue;
+    const colorEl = document.querySelector(`[data-counter-color="${p.id}"]`);
+    try {
+      const r = await api('POST', `/api/counters/printers/${p.id}/readings`, {
+        count: Number(el.value), color_count: colorEl && colorEl.value !== '' ? Number(colorEl.value) : null
+      });
+      el.value = '';
+      if (colorEl) colorEl.value = '';
+      results.push(counterResultText(p, r));
+    } catch (err) {
+      el.focus();
+      throw new Error(`${p.name}: ${err.message}`);
+    }
+  }
+  return results;
 }
 
 function varianceHtml(v) {
@@ -1640,8 +1681,16 @@ async function closeDay() {
   const raw = $('cash-counted').value;
   if (raw === '') return showError(errEl, 'Enter the cash counted in the drawer.');
   const date = $('close-date').value || localDateString();
+  const missing = closeCounterList.filter((p) => { const el = document.querySelector(`[data-counter="${p.id}"]`); return el && el.value === ''; });
+  if (missing.length && !(await confirmModal({
+    title: 'Close without the printer counters?',
+    message: `No counter typed in for ${missing.map((p) => p.name).join(', ')}. Today's photocopies on ${missing.length === 1 ? 'it' : 'them'} won't be counted until the next reading.`,
+    confirmLabel: 'Close anyway', danger: false
+  }))) return;
   const tab = openPendingTab();
   try {
+    const counted = await saveCloseCounters();
+    for (const msg of counted) toast(msg);
     await api('POST', '/api/reports/close', { date, cash_counted: parseFloat(raw), note: $('close-note').value.trim() });
     tab.go(`zreport.html?date=${encodeURIComponent(date)}`);
     toast(`${dayLabel(date)} closed.`);
@@ -2635,22 +2684,44 @@ const COPY_EVIDENCE = {
   sustained: 'went on for several minutes',
   spooled_pages_missing_nearby: 'a print job went missing nearby: may be a late print',
   single_page: 'single page: may be a report page',
-  other_pc_jobs: 'part of it was printing from another PC'
+  other_pc_jobs: 'part of it was printing from another PC',
+  typed_counter: 'from the counter typed in',
+  pc_jobs_subtracted: 'pages printed from the PCs taken off',
+  auto_copies_subtracted: 'copies already found automatically taken off'
 };
 const COPY_BADGE = { high: '<span class="badge ok">Sure</span>', medium: '<span class="badge">Likely</span>', low: '<span class="badge warn">Unsure</span>' };
 
-const COVERAGE_METHOD = { snmp: 'Network', usb: 'USB cable', copy_counter: 'Copy counter' };
+const COVERAGE_METHOD = { snmp: 'Network', usb: 'USB cable', copy_counter: 'Copy counter', typed: 'Typed-in counter' };
 const COVERAGE_STATE = {
+  counter_due: ['Counter to type in', 'warn'],
   ok: ['Watching', 'ok'], starting: ['Checking', ''], failing: ['Can\'t read the counter', 'danger'],
   offline: ['Printer off or unplugged', 'warn'], unsupported: ['Can\'t be watched', 'warn']
 };
 
-// Which printers photocopy detection watches, and why any can't be.
+// Which printers photocopy detection watches, and why any can't be. A
+// printer the agents can't read can be counted from typed-in readings.
+let counterPrinters = [];
+const COUNTER_DAY_MS = 26 * 3600 * 1000;
+
 async function loadCopyCoverage() {
-  const { printers } = await api('GET', '/api/copies/coverage');
+  const [{ printers: agentRows }, { printers: counted }] = await Promise.all([
+    api('GET', '/api/copies/coverage'),
+    api('GET', '/api/counters')
+  ]);
+  counterPrinters = counted;
+  const byName = new Map(counted.map((p) => [p.name, p]));
+  // Printers on no PC (a standalone copier) have only their typed-in counter.
+  const printers = agentRows.concat(counted.filter((p) => !agentRows.some((r) => r.printer_name === p.name))
+    .map((p) => ({ printer_name: p.name, method: 'none', state: 'unsupported', detail: 'Not connected to a PC with the print agent.', agent_offline: false })));
+  for (const c of printers) {
+    const cp = byName.get(c.printer_name);
+    if (!cp || c.state === 'ok') continue;
+    c.counter = cp;
+    c.method = 'typed';
+    c.state = cp.last_reading && Date.now() - Date.parse(cp.last_reading.read_at) < COUNTER_DAY_MS ? 'ok' : 'counter_due';
+  }
   const box = $('copy-coverage');
-  box.hidden = printers.length === 0;
-  if (!printers.length) return;
+  box.hidden = false;
   const watching = printers.filter((c) => c.state === 'ok' && !c.agent_offline).length;
   const problems = printers.filter((c) => c.state !== 'ok' || c.agent_offline).length;
   $('copy-coverage-summary').innerHTML = `Watching ${watching} of ${plural(printers.length, 'printer')}${problems ? ` <span class="badge warn">${problems} need${problems === 1 ? 's' : ''} attention</span>` : ''}`;
@@ -2659,17 +2730,122 @@ async function loadCopyCoverage() {
   box.dataset.seen = '1';
   $('copy-coverage-list').innerHTML = printers.map((c) => {
     const [label, cls] = c.agent_offline ? ['Agent offline', 'warn'] : (COVERAGE_STATE[c.state] || [c.state, '']);
+    const cp = c.counter;
+    let extra = '';
+    if (cp) {
+      const last = cp.last_reading;
+      extra = `<div class="small">${last ? `Counter typed in: <strong class="num">${last.count.toLocaleString()}</strong> on ${escapeHtml(new Date(last.read_at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}` : 'Counted from typed-in readings: no reading yet.'}</div>
+        <div class="row" style="gap:6px;"><button type="button" class="btn btn-outline btn-sm" data-counter-read="${cp.id}">Type in its counter</button><button type="button" class="btn btn-ghost btn-sm" data-counter-edit="${cp.id}">Settings</button></div>`;
+    } else if (c.state !== 'ok' && c.method !== 'snmp' && c.method !== 'usb' && c.method !== 'copy_counter') {
+      extra = `<div class="row" style="gap:6px;"><button type="button" class="btn btn-outline btn-sm" data-counter-start="${escapeHtml(c.printer_name)}">Count copies from its counter, typed in</button></div>`;
+    } else if (c.state === 'failing' || c.state === 'offline') {
+      extra = `<div class="row" style="gap:6px;"><button type="button" class="btn btn-ghost btn-sm" data-counter-start="${escapeHtml(c.printer_name)}">Or type in its counter instead</button></div>`;
+    }
     return `<div class="coverage-row">
       <div class="spread" style="gap:8px;">
         <strong>${escapeHtml(c.printer_name)}</strong>
         <span class="row" style="gap:6px;">${c.method === 'none' ? '' : `<span class="badge info">${escapeHtml(COVERAGE_METHOD[c.method] || c.method)}</span>`}<span class="badge ${cls}">${escapeHtml(label)}</span></span>
       </div>
-      <div class="muted small">${escapeHtml(c.detail)}${c.agent_offline ? ` The agent on ${escapeHtml(c.agent_label)} hasn't reported since ${escapeHtml(formatDbDate(c.last_seen_at) || 'it was set up')}.` : ''}</div>
+      <div class="muted small">${cp ? 'The agent can\'t read this printer\'s counter, so staff type it in: the photocopies are what it went up by, less the pages printed to it from the PCs.' : escapeHtml(c.detail)}${c.agent_offline ? ` The agent on ${escapeHtml(c.agent_label)} hasn't reported since ${escapeHtml(formatDbDate(c.last_seen_at) || 'it was set up')}.` : ''}</div>
+      ${extra}
     </div>`;
-  }).join('');
+  }).join('') + '<div class="coverage-row"><button type="button" class="btn btn-ghost btn-sm" data-counter-start="">+ A printer or copier not connected to any PC</button></div>';
 }
 
+const COUNTER_TIPS = `<details class="small"><summary>Where to find the counter</summary>
+  <ul style="margin:6px 0 0; padding-left:18px;">
+    <li>On the printer's screen: usually under Settings, Maintenance, Printer status or Counter ("Total pages").</li>
+    <li>On a printed status, configuration or usage sheet (hold the printer's Info / Stop button or use its menu).</li>
+    <li>In the maker's utility on the PC: e.g. Epson's Printer and Option Information (Printing preferences → Maintenance), Canon's or HP's printer software.</li>
+    <li>Copiers: the Counter key on the control panel.</li>
+  </ul></details>`;
+
+// Start counting a printer from typed-in readings (or change its settings).
+function openCounterSetup(name, existing) {
+  openModal({
+    title: existing ? `${existing.name}: counter settings` : 'Count photocopies from a typed-in counter',
+    body: `
+      <p class="muted small" style="margin:0;">For a printer whose counter the agent can't read (most USB inkjets, older lasers, copiers on no PC). Staff type in what its counter shows, ideally when closing each day; the photocopies are what it went up by, less the pages printed to it from the PCs.</p>
+      <div class="field"><label for="cp-name">Printer name</label><input id="cp-name" maxlength="200" value="${escapeHtml(existing ? existing.name : name)}" ${existing || name ? 'readonly' : 'placeholder="e.g. Ricoh copier"'} required></div>
+      <div class="form-grid">
+        <div class="field"><label for="cp-color">Colour</label><select id="cp-color">
+          <option value="mono">Black and white only</option>
+          <option value="color">Colour, one counter</option>
+          <option value="split">Colour, separate colour counter</option></select></div>
+        <div class="field"><label for="cp-unit">Its counter counts</label><select id="cp-unit">
+          <option value="impressions">Pages (each side)</option>
+          <option value="sheets">Sheets of paper</option></select></div>
+      </div>
+      ${existing ? '<label class="check"><input type="checkbox" id="cp-stop"> Stop counting this printer</label>' : ''}`,
+    submitLabel: existing ? 'Save' : 'Start counting',
+    onOpen: (form) => {
+      if (existing) { form.querySelector('#cp-color').value = existing.color; form.querySelector('#cp-unit').value = existing.unit; }
+    },
+    onSubmit: async (form) => {
+      const body = { color: form.querySelector('#cp-color').value, unit: form.querySelector('#cp-unit').value };
+      let printer;
+      if (existing) {
+        const stop = form.querySelector('#cp-stop').checked;
+        ({ printer } = await api('PATCH', `/api/counters/printers/${existing.id}`, { ...body, active: !stop }));
+        toast(stop ? `${existing.name} is no longer counted.` : 'Saved.');
+      } else {
+        ({ printer } = await api('POST', '/api/counters/printers', { ...body, name: form.querySelector('#cp-name').value.trim() }));
+      }
+      await loadCopyCoverage().catch(() => {});
+      if (!existing && printer) setTimeout(() => openCounterReading(counterPrinters.find((p) => p.id === printer.id) || printer), 220);
+    }
+  });
+}
+
+function counterResultText(p, r) {
+  if (r.first) return `${p.name}: ${r.reset ? 'new starting point saved after the reset' : 'starting point saved'}. The next reading counts the photocopies made in between.`;
+  const unit = p.unit === 'sheets' ? 'sheet' : 'page';
+  const parts = [`${p.name}: counter up ${r.growth}`];
+  if (r.printed) parts.push(`${plural(r.printed, unit)} printed from the PCs`);
+  if (r.auto) parts.push(`${r.auto} already detected`);
+  return `${parts.join(', ')}: ${r.copies ? `${plural(r.copies, `photocopied ${unit}`)}, waiting to be billed or checked in Print monitor.` : 'no photocopies.'}${r.warning ? ` ${r.warning}` : ''}`;
+}
+
+function openCounterReading(p) {
+  const last = p.last_reading;
+  openModal({
+    title: `Counter of ${p.name}`,
+    body: `
+      ${last ? `<p class="muted small" style="margin:0;">Last reading: <strong class="num">${last.count.toLocaleString()}</strong>${p.color === 'split' && last.color_count != null ? ` (colour ${last.color_count.toLocaleString()})` : ''} on ${escapeHtml(new Date(last.read_at).toLocaleString())}.</p>` : '<p class="muted small" style="margin:0;">First reading: it is the starting point; photocopies are counted from the next one.</p>'}
+      <div class="form-grid">
+        <div class="field"><label for="cr-count">${p.color === 'split' ? 'Total counter' : 'Counter'} now</label><input id="cr-count" type="number" min="0" step="1" inputmode="numeric" required class="input-lg"></div>
+        ${p.color === 'split' ? '<div class="field"><label for="cr-color">Colour counter now</label><input id="cr-color" type="number" min="0" step="1" inputmode="numeric" class="input-lg"></div>' : ''}
+      </div>
+      ${last ? '<label class="check"><input type="checkbox" id="cr-reset"> The counter was reset (new printer or repair): start again from this number</label>' : ''}
+      ${COUNTER_TIPS}`,
+    submitLabel: 'Save reading',
+    onSubmit: async (form) => {
+      const colorEl = form.querySelector('#cr-color');
+      const resetEl = form.querySelector('#cr-reset');
+      const r = await api('POST', `/api/counters/printers/${p.id}/readings`, {
+        count: Number(form.querySelector('#cr-count').value),
+        color_count: colorEl && colorEl.value !== '' ? Number(colorEl.value) : null,
+        reset: !!(resetEl && resetEl.checked)
+      });
+      toast(counterResultText(p, r));
+      if (currentView === 'print-monitor') loadCopies().catch(() => {});
+    }
+  });
+}
+
+let coverageWired = false;
 async function loadCopies() {
+  if (!coverageWired) {
+    coverageWired = true;
+    $('copy-coverage-list').addEventListener('click', (e) => {
+      const start = e.target.closest('[data-counter-start]');
+      if (start) return openCounterSetup(start.dataset.counterStart);
+      const read = e.target.closest('[data-counter-read]');
+      if (read) return openCounterReading(counterPrinters.find((p) => p.id === Number(read.dataset.counterRead)));
+      const edit = e.target.closest('[data-counter-edit]');
+      if (edit) return openCounterSetup('', counterPrinters.find((p) => p.id === Number(edit.dataset.counterEdit)));
+    });
+  }
   loadCopyCoverage().catch(() => { /* optional panel */ });
   const date = $('summary-date').value || localDateString();
   const { copies } = await api('GET', `/api/copies?date=${encodeURIComponent(date)}`);
@@ -2692,7 +2868,7 @@ async function loadCopies() {
           <div><strong>${plural(c.pages, c.unit === 'sheets' ? 'sheet' : 'page')}</strong> <span class="muted">· ${escapeHtml(colour)}</span></div>
           ${COPY_BADGE[c.confidence] || ''}
         </div>
-        <div class="muted small">${escapeHtml(c.printer_name)} · ${escapeHtml(timeOf(c.started_at))}–${escapeHtml(timeOf(c.ended_at))}${c.detected_pages !== c.pages ? ` · ${c.detected_pages} on the counter` : ''}</div>
+        <div class="muted small">${escapeHtml(c.printer_name)} · ${c.counter_from ? `counter typed in at ${escapeHtml(timeOf(c.ended_at))}, since the reading of ${escapeHtml(new Date(c.counter_from).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }))}` : `${escapeHtml(timeOf(c.started_at))}–${escapeHtml(timeOf(c.ended_at))}`}${c.detected_pages !== c.pages ? ` · ${c.detected_pages} on the counter` : ''}</div>
         ${evidence ? `<div class="muted small">${escapeHtml(evidence)}</div>` : ''}
         <div class="row" style="gap:6px; margin-top:6px;">${state}</div>
       </div>`;
@@ -3608,6 +3784,7 @@ function setupAccount() {
 const ALERT_ICONS = {
   toner: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></svg>',
   stock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>',
+  counter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10v4M10.5 10h2v2h-2v2h2M16 10h1.5v4M16 12h1.5"/></svg>',
   fixed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
 };
 let alertSeen = null; // "id:raised_at" of alerts already announced in this tab

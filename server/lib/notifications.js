@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------
-// Alerts for the admin: toner running low, stock running out
+// Alerts for the admin: toner running low, stock running out, printer
+// counters to type in
 //
 // Conditions are worked out from what the system already measures:
 //   * toner and ink: each supply's level from the printers (SNMP) and the
@@ -98,6 +99,20 @@ function currentConditions() {
       detail = `${p.stock_qty} left (alert level ${p.reorder_level}).${order}`;
     }
     if (level) out.set(key, { kind: 'stock', level, title, detail: detail.trim(), link: 'products' });
+  }
+
+  // Printers counted from typed-in readings: a day without one means their
+  // photocopies go uncounted.
+  for (const p of require('./counterReadings').overdue()) {
+    out.set(`counter:${p.id}`, {
+      kind: 'counter',
+      level: WARNING,
+      title: `Type in the counter of ${p.name}`,
+      detail: p.last_reading
+        ? `Last reading ${p.last_reading.count} on ${new Date(p.last_reading.read_at).toLocaleString()}: photocopies on it aren't counted until the next one.`
+        : 'No reading yet: the first one is the starting point for counting its photocopies.',
+      link: 'reports'
+    });
   }
   return { conditions: out, keep };
 }

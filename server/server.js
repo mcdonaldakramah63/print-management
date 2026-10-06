@@ -37,6 +37,7 @@ const { router: remoteRoutes, publicRouter: remotePublic } = require('./routes/r
 const remoteLink = require('./lib/remoteLink');
 const notificationRoutes = require('./routes/notifications');
 const jobRoutes = require('./routes/jobs');
+const counterRoutes = require('./routes/counters');
 const { SqliteStore } = require('./lib/sessionStore');
 const { createStatic, diskSource, seaSource, compressResponses } = require('./lib/staticFiles');
 
@@ -99,6 +100,7 @@ app.use('/api/reconciliation', reconciliationRoutes);
 app.use('/api/remote', remoteRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/jobs', jobRoutes);
+app.use('/api/counters', counterRoutes);
 app.use(remotePublic);
 
 // Relative, so it also works under the relay's /s/<shop>/ prefix.

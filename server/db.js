@@ -422,6 +422,38 @@ CREATE TABLE IF NOT EXISTS copy_coverage (
 );
 `);
 
+// ---------- Typed-in counter readings ----------
+// For printers whose page counter no agent can read (USB inkjets without
+// PJL, copiers on no PC): staff type in what the printer's counter shows.
+// Growth minus the pages printed to it from PCs is photocopies. Their copy
+// runs belong to a built-in "agent" that can't sign in (no key matches).
+db.exec(`
+CREATE TABLE IF NOT EXISTS counter_printers (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE,
+  unit        TEXT NOT NULL DEFAULT 'impressions' CHECK (unit IN ('impressions','sheets')),
+  color       TEXT NOT NULL DEFAULT 'mono' CHECK (color IN ('mono','color','split')),
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS counter_readings (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  counter_printer_id INTEGER NOT NULL REFERENCES counter_printers(id),
+  count              INTEGER NOT NULL,
+  color_count        INTEGER,
+  read_at            TEXT NOT NULL,
+  baseline           INTEGER NOT NULL DEFAULT 0,
+  printed_pages      INTEGER NOT NULL DEFAULT 0,
+  copy_pages         INTEGER NOT NULL DEFAULT 0,
+  copy_event_id      INTEGER REFERENCES copy_events(id),
+  user_id            INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_counter_readings ON counter_readings(counter_printer_id, id);
+`);
+ensureColumn('agents', 'kind', "kind TEXT NOT NULL DEFAULT 'agent'");
+ensureColumn('copy_events', 'counter_from', 'counter_from TEXT');
+
 // ---------- Job builder ----------
 // A customer's order taken at the counter (pages, copies, finishing) and
 // tracked until it is collected. Priced from the catalog; billed through a

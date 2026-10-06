@@ -5,6 +5,15 @@ function localDateString(d = new Date()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// ISO-8601 in the server's local time with its UTC offset, like the print
+// agents stamp jobs and copy runs ("2026-10-06T17:45:00.000+01:00").
+function localIso(d = new Date()) {
+  const pad = (n) => String(Math.floor(Math.abs(n))).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const local = new Date(d.getTime() + off * 60000).toISOString().slice(0, 23);
+  return `${local}${off >= 0 ? '+' : '-'}${pad(off / 60)}:${pad(off % 60)}`;
+}
+
 function daysAgo(n) {
   const d = new Date();
   d.setDate(d.getDate() - n);
@@ -50,4 +59,4 @@ function jobSpan(from, to, col = 'submitted_at') {
   return `(${col} >= '${from}' AND ${col} < '${addDays(to, 1)}')`;
 }
 
-module.exports = { localDateString, daysAgo, isDateString, SALE_DAY, saleSpan, jobSpan, addDays };
+module.exports = { localDateString, daysAgo, isDateString, SALE_DAY, saleSpan, jobSpan, addDays, localIso };
